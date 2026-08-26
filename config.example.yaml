@@ -1,0 +1,25 @@
+# config.example.yaml — PLANTILLA de config.yaml, sin credenciales reales.
+# Este archivo SÍ se puede subir a un repositorio (a diferencia de
+# config.yaml, que está en .gitignore). Sirve para que cualquiera que
+# clone el proyecto sepa qué estructura tiene que tener su propio
+# config.yaml.
+#
+# Para crear tu config.yaml real:
+#   1. Copiá este archivo a config.yaml.
+#   2. Reemplazá los usuarios de ejemplo por los reales.
+#   3. Generá el hash de cada contraseña (ver README.md, sección
+#      "Configurar usuarios") -- NUNCA escribas una contraseña en texto
+#      plano en config.yaml.
+#   4. Generá una "cookie.key" nueva y aleatoria (también en el README).
+
+credentials:
+  usernames:
+    admin:
+      name: Nombre Apellido
+      email: usuario@empresa.com
+      password: $2b$12$REEMPLAZAR_CON_HASH_BCRYPT_REAL
+
+cookie:
+  name: contratobot_auth_cookie
+  key: REEMPLAZAR_CON_UNA_CLAVE_ALEATORIA_LARGA
+  expiry_days: 7

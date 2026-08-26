@@ -1,0 +1,38 @@
+# Credenciales y secretos — nunca deben subirse al repositorio.
+config.yaml
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Archivos temporales / generados por el uso normal de la app
+*.tmp
+~$*
+temp_*.xlsx
+resultado_chatbot.xlsx
+test_axb_resultado.xlsx
+
+# Configuración local de Claude Code (personal de esta máquina, no del equipo)
+.claude/settings.local.json
+
+# Estado en vivo de la app -- datos que cambian con cada uso real, no código.
+# No tiene sentido versionarlos (ensucian el historial con cada contrato
+# generado) ni compartirlos entre computadoras vía git.
+contrato_stats.json
+historial_membresias.json
+modo_pruebas.json
+memoria_aprendizaje.json
+
+# Plantillas por proyecto (Word/Excel reales de cada proyecto) y la guía en
+# PDF: son contenido de negocio, no código -- git no las puede diferenciar
+# bien (son binarios) y van a crecer con el tiempo. Se siguen agregando a
+# mano en disco como hasta ahora; no forman parte de este repositorio.
+PLANTILLAS/
+GUIA_PASO_A_PASO.pdf
