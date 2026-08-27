@@ -49,6 +49,7 @@ from word_com_bridge import (
     PAGINA_AXE_IMAGEN,
     agregar_imagenes_a_contrato,
     recalcular_excel_con_com,
+    recortar_contrato_a_maximo_paginas,
 )
 from templates_manager import (
     NOMBRE_ARCHIVO_CONTRATO,
@@ -593,6 +594,14 @@ elif paso_actual == 3:
                             excel_bytes_recalculado, contrato_resultado_bytes, especificaciones_imagenes
                         )
                         contrato_info["imagenes_pegadas"] = especificaciones_imagenes
+
+                    # El CONTRATO está diseñado para ocupar exactamente 15
+                    # páginas -- un placeholder con un nombre/texto más largo
+                    # de lo normal a veces hace que se pase a una página 16
+                    # extra al final (con muy poco o nada de contenido real).
+                    # Se recorta SIEMPRE (haya o no imágenes pegadas), para
+                    # que nunca salga un CONTRATO de más de 15 páginas.
+                    contrato_resultado_bytes = recortar_contrato_a_maximo_paginas(contrato_resultado_bytes)
                 except Exception as e:
                     contrato_resultado_bytes = None
                     st.error(f"❌ Ocurrió un error al procesar el CONTRATO: {e}")

@@ -67,6 +67,23 @@ XL_BITMAP = 2                    # XlCopyPictureFormat.xlBitmap
 XL_REPAIR_FILE = 1               # XlCorruptLoad.xlRepairFile
 XL_OPEN_XML_WORKBOOK = 51        # XlFileFormat.xlOpenXMLWorkbook (.xlsx)
 
+# Constantes numéricas fijas de Word (documentadas por Microsoft), a nivel
+# de módulo porque las necesitan tanto pegar_rangos_excel_como_imagen_en_word
+# como recortar_contrato_a_maximo_paginas.
+WD_GOTO_PAGE = 1                 # WdGoToItem.wdGoToPage
+WD_GOTO_ABSOLUTE = 1             # WdGoToDirection.wdGoToAbsolute
+WD_COLLAPSE_START = 1            # WdCollapseDirection.wdCollapseStart
+WD_STATISTIC_PAGES = 2           # WdStatistic.wdStatisticPages
+WD_PRINT_VIEW = 3                # WdViewType.wdPrintView
+
+# El CONTRATO está diseñado para ocupar exactamente 15 páginas (la última
+# imagen pegada, la de "Ax.E", va en la página 15 -- ver PAGINA_AXE_IMAGEN
+# más abajo). Un placeholder con un nombre/texto más largo de lo normal a
+# veces hace que el documento "se pase" a una página 16 extra al final
+# (con muy poco o nada de contenido real) -- ver
+# recortar_contrato_a_maximo_paginas, que la borra siempre.
+MAX_PAGINAS_CONTRATO = 15
+
 # Cuántas veces reintentar la captura de UN rango si sale "en blanco" (ver
 # _imagen_esta_en_blanco) antes de rendirse con un error claro. La causa
 # más probable de una captura en blanco es que la pantalla de esta
@@ -293,15 +310,6 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     ctypes.windll.kernel32.SetThreadExecutionState(
         ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
     )
-
-    # Constantes numéricas fijas de Word (documentadas por Microsoft), en
-    # vez de win32com.client.constants.*, para no depender del orden de
-    # dispatch (XL_SCREEN/XL_BITMAP quedaron a nivel de módulo, ver arriba).
-    WD_GOTO_PAGE = 1                 # WdGoToItem.wdGoToPage
-    WD_GOTO_ABSOLUTE = 1             # WdGoToDirection.wdGoToAbsolute
-    WD_COLLAPSE_START = 1            # WdCollapseDirection.wdCollapseStart
-    WD_STATISTIC_PAGES = 2           # WdStatistic.wdStatisticPages
-    WD_PRINT_VIEW = 3                # WdViewType.wdPrintView
 
     ruta_excel = os.path.abspath(ruta_excel)
     ruta_word = os.path.abspath(ruta_word)
@@ -543,6 +551,85 @@ def agregar_imagenes_a_contrato(excel_bytes, docx_bytes, especificaciones):
                 os.remove(ruta)
             except OSError:
                 pass
+
+
+def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTRATO):
+    """Abre 'docx_bytes' en Word de verdad y, si el documento tiene MÁS de
+    'max_paginas' páginas, borra todo el contenido desde el inicio de la
+    página max_paginas+1 hasta el final del documento, y lo guarda.
+    Devuelve los bytes resultantes (recortados, o los mismos de entrada
+    sin cambios si el documento ya tenía max_paginas o menos -- igual hay
+    que abrir Word para saber cuántas páginas tiene de verdad).
+
+    Hace falta abrir Word de verdad porque python-docx no calcula
+    paginación (depende del layout real al renderizar el documento);
+    ComputeStatistics(wdStatisticPages) es la única forma confiable de
+    saber cuántas páginas tiene REALMENTE. Requiere Windows + Word
+    instalados; usa pywin32."""
+    if not _en_windows():
+        raise RuntimeError(
+            "Recortar el CONTRATO a un máximo de páginas requiere Windows con "
+            "Microsoft Word instalado (usa automatización COM vía pywin32); esta "
+            "máquina/servidor no es Windows, así que este paso no se puede ejecutar aquí."
+        )
+
+    try:
+        import pythoncom
+        import win32com.client as win32
+    except ImportError as exc:
+        raise RuntimeError(
+            "No se encontró pywin32 instalado. Instálalo con: pip install pywin32"
+        ) from exc
+
+    pythoncom.CoInitialize()
+
+    tmp_word = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+    tmp_word.write(docx_bytes)
+    tmp_word.close()
+    ruta_word = os.path.abspath(tmp_word.name)
+
+    word = None
+    doc = None
+    try:
+        word = win32.Dispatch("Word.Application")
+        word.Visible = True
+        word.DisplayAlerts = 0  # wdAlertsNone: evita diálogos de Word que bloquearían las llamadas COM
+        doc = _com_retry(lambda: word.Documents.Open(ruta_word))
+        # Forzar el cálculo de la paginación REAL (ver la nota junto a esto
+        # mismo en pegar_rangos_excel_como_imagen_en_word: con la app
+        # invisible, Word no calcula bien la paginación real).
+        _com_retry(lambda: setattr(doc.ActiveWindow.View, "Type", WD_PRINT_VIEW))
+        total_paginas = _com_retry(
+            lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
+            descripcion="Word ComputeStatistics (para recortar páginas sobrantes)",
+        )
+
+        if total_paginas > max_paginas:
+            seleccion = word.Selection
+            _com_retry(
+                lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=max_paginas + 1),
+                descripcion=f"Word GoTo página {max_paginas + 1} (recorte de páginas sobrantes)",
+            )
+            _com_retry(
+                lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
+                descripcion="Word Collapse (recorte de páginas sobrantes)",
+            )
+            rango_sobrante = doc.Range(Start=seleccion.Start, End=doc.Content.End)
+            _com_retry(lambda: rango_sobrante.Delete(), descripcion="Word borrar páginas sobrantes")
+            _com_retry(lambda: doc.Save(), descripcion="Word doc.Save() (tras recortar páginas sobrantes)")
+
+        with open(ruta_word, "rb") as f:
+            return f.read()
+    finally:
+        if doc is not None:
+            doc.Close(SaveChanges=False)
+        if word is not None:
+            word.Quit()
+        pythoncom.CoUninitialize()
+        try:
+            os.remove(ruta_word)
+        except OSError:
+            pass
 
 
 def agregar_imagen_listax_a_contrato(excel_bytes, docx_bytes,
