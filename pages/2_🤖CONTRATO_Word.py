@@ -16,6 +16,7 @@ from auth_utils import requerir_login, mostrar_boton_logout
 from historial_contratos import (
     extraer_lote_y_nombre,
     guardar_copia,
+    nombre_archivo_descarga,
     registrar_numero_membresia,
     obtener_ultimo_numero_membresia,
     obtener_historial_membresias,
@@ -666,16 +667,25 @@ elif paso_actual == 3:
 
         # Archivo histórico (ver historial_contratos.py): una copia de
         # cada documento generado en CONTRATOS\<proyecto>\<lote nombre>\,
-        # y el prefijo se guarda para nombrar los botones de descarga del
-        # Paso 4 igual. También registra el número de membresía usado
+        # y los nombres de descarga del Paso 4 se arman igual: "<TIPO> -
+        # <lote nombre>". También registra el número de membresía usado
         # (para el aviso "Último usado" del Paso 2). No corta el
         # procesamiento con el Modo de pruebas activo, sin lote/nombre, o
         # si la carpeta no es accesible en esta máquina -- pero el motivo
         # queda guardado para avisar en el Paso 4 (en vez de fallar en
         # silencio sin que nadie se entere).
         _lote, _nombre_cliente = extraer_lote_y_nombre(excel_bytes_recalculado)
-        st.session_state["archivo_prefijo"] = (
-            f"{_lote} {_nombre_cliente} - " if _lote and _nombre_cliente else ""
+        st.session_state["archivo_nombre_contrato"] = nombre_archivo_descarga(
+            "CONTRATO", _lote, _nombre_cliente, "docx",
+        )
+        st.session_state["archivo_nombre_reglamento"] = nombre_archivo_descarga(
+            "REGLAMENTO", _lote, _nombre_cliente, "docx",
+        )
+        st.session_state["archivo_nombre_membresia"] = nombre_archivo_descarga(
+            "MEMBRESIA", _lote, _nombre_cliente, "docx",
+        )
+        st.session_state["archivo_nombre_derechohabientes"] = nombre_archivo_descarga(
+            "DERECHOHABIENTES", _lote, _nombre_cliente, "docx",
         )
         _rutas_archivadas = []
         _motivo_no_archivado = None
@@ -735,7 +745,7 @@ elif paso_actual == 4:
             st.download_button(
                 label="DESCARGAR",
                 data=st.session_state["word_resultado_bytes"],
-                file_name=f'{st.session_state.get("archivo_prefijo", "")}CONTRATO.docx',
+                file_name=st.session_state.get("archivo_nombre_contrato", "CONTRATO.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 width="stretch",
             )
@@ -758,7 +768,7 @@ elif paso_actual == 4:
             st.download_button(
                 label="DESCARGAR",
                 data=st.session_state["reglamento_resultado_bytes"],
-                file_name=f'{st.session_state.get("archivo_prefijo", "")}REGLAMENTO.docx',
+                file_name=st.session_state.get("archivo_nombre_reglamento", "REGLAMENTO.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 width="stretch",
             )
@@ -778,7 +788,7 @@ elif paso_actual == 4:
             st.download_button(
                 label="DESCARGAR",
                 data=st.session_state["membresia_resultado_bytes"],
-                file_name=f'{st.session_state.get("archivo_prefijo", "")}MEMBRESIA.docx',
+                file_name=st.session_state.get("archivo_nombre_membresia", "MEMBRESIA.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 width="stretch",
             )
@@ -798,7 +808,7 @@ elif paso_actual == 4:
             st.download_button(
                 label="DESCARGAR",
                 data=st.session_state["derechohabientes_resultado_bytes"],
-                file_name=f'{st.session_state.get("archivo_prefijo", "")}DERECHOHABIENTES.docx',
+                file_name=st.session_state.get("archivo_nombre_derechohabientes", "DERECHOHABIENTES.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 width="stretch",
             )

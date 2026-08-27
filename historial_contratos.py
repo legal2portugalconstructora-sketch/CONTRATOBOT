@@ -69,12 +69,26 @@ def carpeta_cliente(proyecto, lote, nombre_cliente, crear=True):
     return ruta, prefijo
 
 
+def nombre_archivo_descarga(tipo_documento, lote, nombre_cliente, extension):
+    """Arma el nombre para los botones de descarga y para el archivo
+    guardado en el historial: '<TIPO> - <lote nombre>.<extension>' (ej.
+    'CONTRATO - E-15 ANDY ANDRÉS TAGLE CHARCA.docx'). Si falta el lote o
+    el nombre del cliente, devuelve solo '<TIPO>.<extension>' (mismo
+    comportamiento que había antes de tener este dato)."""
+    extension = extension.lstrip(".")
+    if lote and nombre_cliente and str(lote).strip() and str(nombre_cliente).strip():
+        return f"{tipo_documento} - {prefijo_archivo(lote, nombre_cliente)}.{extension}"
+    return f"{tipo_documento}.{extension}"
+
+
 def guardar_copia(proyecto, lote, nombre_cliente, nombre_base_archivo, bytes_contenido):
     """Guarda una copia de 'bytes_contenido' en
-    CONTRATOS/<proyecto>/<lote nombre>/<lote nombre> - <nombre_base_archivo>.
-    Nunca lanza excepción hacia afuera -- si algo falla (Modo de pruebas
-    activo, falta lote/nombre, RAIZ_HISTORIAL no accesible en esta
-    máquina, etc.), no interrumpe el procesamiento real.
+    CONTRATOS/<proyecto>/<lote nombre>/<TIPO> - <lote nombre>.<extensión>
+    ('nombre_base_archivo' es el nombre genérico del documento, ej.
+    "CONTRATO.docx" -- el tipo y la extensión se separan de ahí). Nunca
+    lanza excepción hacia afuera -- si algo falla (Modo de pruebas activo,
+    falta lote/nombre, RAIZ_HISTORIAL no accesible en esta máquina, etc.),
+    no interrumpe el procesamiento real.
 
     Devuelve (ruta_o_None, motivo_o_None): si se guardó, ruta tiene la
     ruta y motivo es None; si NO se guardó, ruta es None y motivo trae un
@@ -88,8 +102,10 @@ def guardar_copia(proyecto, lote, nombre_cliente, nombre_base_archivo, bytes_con
     if not nombre_cliente or not str(nombre_cliente).strip():
         return None, "no se encontró el nombre del cliente (celda DATOS!E11 está vacía en el Excel)"
     try:
-        carpeta, prefijo = carpeta_cliente(proyecto, lote, nombre_cliente)
-        ruta_archivo = os.path.join(carpeta, f"{prefijo} - {nombre_base_archivo}")
+        carpeta, _ = carpeta_cliente(proyecto, lote, nombre_cliente)
+        tipo_documento, extension = os.path.splitext(nombre_base_archivo)
+        nombre_final = nombre_archivo_descarga(tipo_documento, lote, nombre_cliente, extension)
+        ruta_archivo = os.path.join(carpeta, nombre_final)
         with open(ruta_archivo, "wb") as f:
             f.write(bytes_contenido)
         return ruta_archivo, None

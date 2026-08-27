@@ -20,7 +20,7 @@ from excel_pipeline import (
     FILA_AUTOFILL_ORIGEN,
     FILA_AUTOFILL_AXB,
 )
-from historial_contratos import extraer_lote_y_nombre, guardar_copia
+from historial_contratos import extraer_lote_y_nombre, guardar_copia, nombre_archivo_descarga
 from stats_tracker import registrar_generacion, modo_pruebas_activo, establecer_modo_pruebas
 from templates_manager import NOMBRE_ARCHIVO_MODELO_EXCEL, obtener_celdas_axa
 from ui_utils import (
@@ -548,8 +548,8 @@ elif paso_actual == 3:
         )
 
         # Archivo histórico (ver historial_contratos.py): copia del
-        # COTIZADOR en CONTRATOS\<proyecto>\<lote nombre>\, y el prefijo
-        # se guarda para nombrar el botón de descarga del Paso 4 igual.
+        # COTIZADOR en CONTRATOS\<proyecto>\<lote nombre>\, y el nombre de
+        # descarga (Paso 4) se arma igual: "COTIZADOR - <lote nombre>".
         # No corta el procesamiento con el Modo de pruebas activo, sin
         # lote/nombre, o si la carpeta no es accesible en esta máquina --
         # pero el motivo queda guardado para avisar en el Paso 4 (en vez
@@ -558,8 +558,8 @@ elif paso_actual == 3:
         _ruta_archivada, _motivo_no_archivado = guardar_copia(
             proyecto_seleccionado, _lote, _nombre_cliente, "COTIZADOR.xlsx", resultado_bytes,
         )
-        st.session_state["archivo_prefijo"] = (
-            f"{_lote} {_nombre_cliente} - " if _lote and _nombre_cliente else ""
+        st.session_state["archivo_nombre_descarga"] = nombre_archivo_descarga(
+            "COTIZADOR", _lote, _nombre_cliente, "xlsx",
         )
         st.session_state["archivo_ruta_archivada"] = _ruta_archivada
         st.session_state["archivo_motivo_no_archivado"] = _motivo_no_archivado
@@ -582,7 +582,7 @@ elif paso_actual == 4:
         st.download_button(
             label="DESCARGAR",
             data=st.session_state["resultado_bytes"],
-            file_name=f'{st.session_state.get("archivo_prefijo", "")}COTIZADOR.xlsx',
+            file_name=st.session_state.get("archivo_nombre_descarga", "COTIZADOR.xlsx"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
             width="stretch",

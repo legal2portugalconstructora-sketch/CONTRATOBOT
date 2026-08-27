@@ -164,14 +164,15 @@ with st.container(border=True):
 
                     # Archivo histórico (ver historial_contratos.py): esta
                     # página no sabe a qué proyecto pertenece un .docx --
-                    # si el nombre subido ya tiene el prefijo "<lote nombre> - "
-                    # (porque vino de una descarga del módulo Word), busca
-                    # esa carpeta entre todos los proyectos y guarda el PDF
-                    # ahí también. Si no la encuentra, no hace nada -- la
-                    # descarga normal de acá abajo sigue funcionando igual.
+                    # si el nombre subido ya tiene el formato "<TIPO> -
+                    # <lote nombre>" (porque vino de una descarga del
+                    # módulo Word), busca esa carpeta entre todos los
+                    # proyectos y guarda el PDF ahí también. Si no la
+                    # encuentra, no hace nada -- la descarga normal de acá
+                    # abajo sigue funcionando igual.
                     nombre_sin_ext = os.path.splitext(archivo.name)[0]
                     if " - " in nombre_sin_ext:
-                        prefijo_candidato = nombre_sin_ext.rsplit(" - ", 1)[0]
+                        prefijo_candidato = nombre_sin_ext.split(" - ", 1)[1]
                         carpeta = encontrar_carpeta_por_prefijo(prefijo_candidato)
                         if carpeta:
                             guardar_copia_en_carpeta(carpeta, nombre_pdf, pdf_bytes)

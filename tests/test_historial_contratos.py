@@ -51,8 +51,14 @@ if __name__ == "__main__":
         # --- guardar_copia (modo pruebas apagado) ---
         ruta, motivo = hc.guardar_copia(PROYECTO_TEST, "L-2", "JUAN PEREZ TEST", "COTIZADOR.xlsx", b"contenido")
         assert ruta is not None and motivo is None and os.path.exists(ruta)
-        assert os.path.basename(ruta) == "L-2 JUAN PEREZ TEST - COTIZADOR.xlsx"
+        assert os.path.basename(ruta) == "COTIZADOR - L-2 JUAN PEREZ TEST.xlsx"
         print("guardar_copia guarda con el nombre correcto -- OK")
+
+        # --- nombre_archivo_descarga (usado por los botones de descarga) ---
+        assert hc.nombre_archivo_descarga("CONTRATO", "L-2", "JUAN PEREZ TEST", "docx") == "CONTRATO - L-2 JUAN PEREZ TEST.docx"
+        assert hc.nombre_archivo_descarga("CONTRATO", "L-2", "JUAN PEREZ TEST", ".docx") == "CONTRATO - L-2 JUAN PEREZ TEST.docx"
+        assert hc.nombre_archivo_descarga("CONTRATO", None, None, "docx") == "CONTRATO.docx"
+        print("nombre_archivo_descarga arma el nombre en el orden nuevo -- OK")
 
         # --- guardar_copia respeta el Modo de pruebas ---
         establecer_modo_pruebas(True)
