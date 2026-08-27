@@ -72,9 +72,16 @@ _TRANSFORMACIONES_TEXTO_EXCEL = {
 _PATRON_FUNCION_TEXTO = re.compile(r"^(UPPER|LOWER|PROPER)\s*\((.+)\)$", re.IGNORECASE)
 # Referencia a UNA celda, con hoja opcional (misma hoja si no se indica),
 # ej. "O127", "Cotizador!I16" o "'Ax.A'!O132" (comillas si el nombre de
-# la hoja tiene puntos/espacios, como hace Excel).
+# la hoja tiene puntos/espacios, como hace Excel). El "(?:\[\d+\])?" al
+# principio tolera (e ignora) el prefijo que Excel antepone cuando la
+# fórmula quedó apuntando a un LIBRO EXTERNO (ej. "=[1]Cotizador!I16" --
+# visto de verdad en el MODELO de FINCA DEL VALLE): como de todos modos
+# 'wb' acá es siempre el mismo libro que se está procesando, y el nombre
+# de hoja coincide con una hoja real de ESE libro, tiene más sentido leer
+# el valor actual de esa hoja local que fallar o devolver el texto crudo
+# de la fórmula.
 _PATRON_REF_HOJA_CELDA = re.compile(
-    r"^(?:(?:'(?P<hoja_q>[^']+)'|(?P<hoja>[A-Za-z_][A-Za-z0-9_.]*))!)?"
+    r"^(?:\[\d+\])?(?:(?:'(?P<hoja_q>[^']+)'|(?P<hoja>[A-Za-z_][A-Za-z0-9_.]*))!)?"
     r"\$?(?P<columna>[A-Za-z]{1,3})\$?(?P<fila>\d{1,7})$"
 )
 
@@ -214,8 +221,12 @@ def leer_datos_para_contrato(archivo_excel, celdas_axa=None):
     valor_o132 = _resolver_texto_formula(wb, sheet_axa, _lee(sheet_axa_formulas, celda_o132))
     valor_o132 = _fecha_en_letras(valor_o132)
 
+    # Sin "and valor_o132" quedaría literal "en la ciudad de Arequipa el
+    # None" si la fecha (Cotizador!I16) vino vacía -- se prefiere no
+    # anteponer nada en ese caso, igual que ya se comportaba antes de
+    # agregar la ciudad.
     sede_detectada = _detectar_sede_desde_g124(sheet_axa_formulas, celdas_axa)
-    if sede_detectada:
+    if sede_detectada and valor_o132:
         valor_o132 = f"en la ciudad de {sede_detectada} el {valor_o132}"
 
     return {
