@@ -18,6 +18,9 @@ env/
 temp_*.xlsx
 resultado_chatbot.xlsx
 test_axb_resultado.xlsx
+empty_stdin.txt
+streamlit_out*.log
+streamlit_err*.log
 
 # Configuración local de Claude Code (personal de esta máquina, no del equipo)
 .claude/settings.local.json
