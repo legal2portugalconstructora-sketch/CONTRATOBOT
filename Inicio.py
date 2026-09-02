@@ -31,7 +31,6 @@ mostrar_boton_logout(authenticator)
 mostrar_logo()
 
 nombre_usuario = st.session_state.get("name", "")
-inicial_usuario = (nombre_usuario or "?").strip()[:1].upper()
 
 # =========================================================================
 # ESTILO — paleta corporativa propia de esta página (azul oscuro/azul,
@@ -134,16 +133,6 @@ st.html(
         border-color: var(--home-accent) !important;
         box-shadow: 0 0 0 3px rgba(37,99,235,.15) !important;
     }
-    .home-avatar {
-        width: 34px; height: 34px; border-radius: 50%;
-        background: linear-gradient(135deg, var(--home-accent), var(--home-primary));
-        color: #fff !important; font-weight: 700; font-size: .95rem;
-        display: flex; align-items: center; justify-content: center;
-        box-shadow: var(--home-shadow);
-    }
-    .home-profile-row { display: flex; align-items: center; gap: 0.55rem; height: 38px; }
-    .home-profile-name { font-weight: 600; font-size: .9rem; color: var(--home-text) !important; }
-
     /* Botones "ícono" (🔔/⚙️) del popover: circulares, discretos */
     div[data-testid="stPopover"] > div > button {
         border-radius: 50% !important;
@@ -261,15 +250,15 @@ st.html(
 
 # =========================================================================
 # BARRA SUPERIOR — búsqueda (filtra módulos/acciones más abajo), campana de
-# notificaciones (errores reales registrados), configuración (info real de
-# la sesión + cerrar sesión) y perfil (usuario real logueado).
+# notificaciones (errores reales registrados) y configuración (Modo de
+# pruebas). Ya no hay login, así que no hay perfil ni "cerrar sesión".
 # =========================================================================
 resumen = obtener_resumen(categoria="word")
 resumen_excel = obtener_resumen(categoria="excel")
 errores_totales = resumen["errores"] + resumen_excel["errores"]
 
 st.markdown('<div class="home-topbar-wrap">', unsafe_allow_html=True)
-col_busqueda, col_notif, col_config, col_perfil = st.columns([6, 1, 1, 2.2])
+col_busqueda, col_notif, col_config = st.columns([7, 1, 1])
 with col_busqueda:
     busqueda = st.text_input(
         "Buscar",
@@ -287,7 +276,6 @@ with col_notif:
 with col_config:
     with st.popover("⚙️", width="content"):
         st.markdown("**Configuración**")
-        st.caption(f"Usuario: **{nombre_usuario or '—'}**")
         st.caption("El tema (claro/oscuro) sigue la preferencia de tu sistema/navegador.")
         st.divider()
         _modo_pruebas_guardado = modo_pruebas_activo()
@@ -306,16 +294,6 @@ with col_config:
             establecer_modo_pruebas(_modo_pruebas_nuevo)
         if _modo_pruebas_nuevo:
             st.caption("🧪 Activo: las estadísticas no se están actualizando ahora mismo.")
-        st.divider()
-        authenticator.logout("Cerrar sesión", location="main", key="home_logout_popover")
-with col_perfil:
-    st.markdown(
-        f'<div class="home-profile-row">'
-        f'<div class="home-avatar">{inicial_usuario}</div>'
-        f'<span class="home-profile-name">{nombre_usuario or "Usuario"}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
 st.markdown('</div>', unsafe_allow_html=True)
 
 if _modo_pruebas_nuevo:
