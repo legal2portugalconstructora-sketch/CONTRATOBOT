@@ -50,6 +50,7 @@ from word_com_bridge import (
     agregar_imagenes_a_contrato,
     recalcular_excel_con_com,
     recortar_contrato_a_maximo_paginas,
+    MAX_PAGINAS_CONTRATO,
 )
 from templates_manager import (
     NOMBRE_ARCHIVO_CONTRATO,
@@ -589,19 +590,26 @@ elif paso_actual == 3:
                         especificaciones_imagenes.append(
                             (HOJA_AXE_IMAGEN, RANGO_AXE_IMAGEN, PAGINA_AXE_IMAGEN)
                         )
-                    if especificaciones_imagenes:
-                        contrato_resultado_bytes = agregar_imagenes_a_contrato(
-                            excel_bytes_recalculado, contrato_resultado_bytes, especificaciones_imagenes
-                        )
-                        contrato_info["imagenes_pegadas"] = especificaciones_imagenes
-
                     # El CONTRATO está diseñado para ocupar exactamente 15
                     # páginas -- un placeholder con un nombre/texto más largo
                     # de lo normal a veces hace que se pase a una página 16
                     # extra al final (con muy poco o nada de contenido real).
                     # Se recorta SIEMPRE (haya o no imágenes pegadas), para
                     # que nunca salga un CONTRATO de más de 15 páginas.
-                    contrato_resultado_bytes = recortar_contrato_a_maximo_paginas(contrato_resultado_bytes)
+                    #
+                    # Cuando SÍ hay imágenes, el recorte se hace en la MISMA
+                    # sesión de Word que ya se abre para pegarlas (pasando
+                    # max_paginas a agregar_imagenes_a_contrato) -- así se
+                    # evita abrir Word una segunda vez solo para el recorte
+                    # (ahorra un ciclo completo de abrir/cerrar Word).
+                    if especificaciones_imagenes:
+                        contrato_resultado_bytes = agregar_imagenes_a_contrato(
+                            excel_bytes_recalculado, contrato_resultado_bytes, especificaciones_imagenes,
+                            max_paginas=MAX_PAGINAS_CONTRATO,
+                        )
+                        contrato_info["imagenes_pegadas"] = especificaciones_imagenes
+                    else:
+                        contrato_resultado_bytes = recortar_contrato_a_maximo_paginas(contrato_resultado_bytes)
                 except Exception as e:
                     contrato_resultado_bytes = None
                     st.error(f"❌ Ocurrió un error al procesar el CONTRATO: {e}")
