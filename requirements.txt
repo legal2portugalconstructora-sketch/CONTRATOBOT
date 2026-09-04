@@ -7,3 +7,4 @@ streamlit-authenticator==0.4.2
 python-dotenv==1.2.2
 PyYAML==6.0.3
 bcrypt==5.0.0
+rapidfuzz==3.14.6
