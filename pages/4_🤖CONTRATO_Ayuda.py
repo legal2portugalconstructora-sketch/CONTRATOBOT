@@ -118,7 +118,10 @@ PASOS_POR_MODULO = {
             "por defecto): Paso 2 Cotizador, Paso 3 FICHA, Paso 4 medidas del plano (Adelante/"
             "Derecha/Izquierda/Fondo + Sede), Paso 5 Ax.B, Paso 6 Membresía.\n"
             "4. **📋 Resumen antes de procesar** — revisá que esté todo bien antes de Procesar.\n"
-            "5. **✅ Resultado** — descargá el COTIZADOR.xlsx y revisá el registro de actividad."
+            "5. **✅ Resultado** — descargá el Excel (sale nombrado \"COTIZADOR - <lote> "
+            "<nombre del cliente>.xlsx\") y revisá el registro de actividad. Si el lote y el "
+            "nombre se pudieron leer, esta misma copia se archiva sola — ver \"Archivo "
+            "histórico\" más abajo."
         ),
         "extra": (
             "💬 Al final de esta página hay un cuadro de texto para \"enseñarle\" reglas al bot "
@@ -130,18 +133,24 @@ PASOS_POR_MODULO = {
         "pasos": (
             "1. **📁 Proyecto y plantillas** — elegí el proyecto y subí el Excel ya generado "
             "por el módulo Excel; elegí cuáles de los 4 documentos base generar.\n"
-            "2. **🧾 Datos de este cliente/cotización** — igual que en Excel.\n"
+            "2. **🧾 Datos de este cliente/cotización** — igual que en Excel. Si vas a escribir "
+            "un Número de Membresía, acá aparece un aviso con el último que se usó (y un "
+            "historial de los últimos 20), para saber en qué número vas.\n"
             "3. **⚙️ Configuración del contrato** — 🏠 Tipo de propiedad (único propietario, "
             "casados, copropietarios...), 📕 Membresía (CON/SIN, cambia el ANEXO del "
             "documento), 🪪 Número de Membresía (reemplaza \"GTAA\" si aplica), y 📎 si pegar "
             "o no las imágenes de Excel dentro del CONTRATO.\n"
             "4. **📋 Resumen antes de procesar**.\n"
-            "5. **✅ Resultado** — un botón DESCARGAR por cada documento generado."
+            "5. **✅ Resultado** — un botón DESCARGAR por cada documento generado (nombrados "
+            "\"CONTRATO - <lote> <nombre>.docx\", \"REGLAMENTO - ...\", etc.), que también se "
+            "archivan solos — ver \"Archivo histórico\" más abajo."
         ),
         "extra": (
             "El botón \"🚀 Procesar CONTRATO\" recalcula el Excel con Excel real primero "
             "(puede tardar); por eso la home mide y muestra el tiempo promedio de esta "
-            "operación."
+            "operación. El CONTRATO nunca sale con más de 15 páginas: si un nombre/texto muy "
+            "largo hace que se pase a una página 16, esa página se recorta sola antes de "
+            "mostrar el resultado."
         ),
     },
     "pages/3_🤖CONTRATO_PDF.py": {
@@ -151,7 +160,12 @@ PASOS_POR_MODULO = {
             "3. Descargá cada PDF — sale con **el mismo nombre** con el que subiste el .docx "
             "(solo cambia la extensión)."
         ),
-        "extra": "Si subís más de 4 archivos, avisa y no deja convertir hasta que saques alguno.",
+        "extra": (
+            "Si subís más de 4 archivos, avisa y no deja convertir hasta que saques alguno. "
+            "Si el .docx que subiste tiene el formato de nombre \"TIPO - <lote> <nombre>\" (el "
+            "que descargan los módulos Excel/Word), el PDF se archiva solo en la misma carpeta "
+            "del cliente — ver \"Archivo histórico\" más abajo."
+        ),
     },
 }
 
@@ -189,11 +203,34 @@ with st.container(border=True):
     st.page_link("Inicio.py", label="Ir a Inicio →")
 
 with st.container(border=True):
+    st.markdown("**🗂️ ¿Qué es el archivo histórico?**")
+    st.write(
+        "Cada vez que descargás un Excel o un Word (CONTRATO, REGLAMENTO, MEMBRESIA o "
+        "DERECHOHABIENTES) y la app pudo leer el lote y el nombre del cliente, se guarda "
+        "automáticamente una copia en `C:\\JESUS LEGAL\\CONTRATOS\\<proyecto>\\<lote> "
+        "<nombre del cliente>\\`, con el mismo nombre que descargaste. No hace falta hacer "
+        "nada aparte — pasa solo, en segundo plano, después de procesar. Si por algún motivo "
+        "no se pudo archivar (falta el lote/nombre en el Excel, o esa carpeta no existe en "
+        "esta computadora), el Paso final de Excel/Word avisa el motivo en vez de fallar en "
+        "silencio."
+    )
+    st.write(
+        "Los números de Membresía que vas escribiendo también quedan en un historial propio "
+        "(no en esa carpeta) — por eso el Paso 2 del módulo Word te muestra el último usado."
+    )
+    st.caption(
+        "Con el Modo de pruebas activo, nada de esto se guarda (ni copias, ni números de "
+        "membresía) — ver más abajo."
+    )
+
+with st.container(border=True):
     st.markdown("**🧪 ¿Qué es el Modo de pruebas?**")
     st.write(
         "Se activa desde ⚙️ Configuración, en la página de Inicio. Mientras está prendido, "
         "los Excel y Word que proceses **no se suman** a las estadísticas de \"generados\" ni "
-        "de \"errores\" — útil para probar la app sin ensuciar los números reales. "
+        "de \"errores\", **no se archivan** en `C:\\JESUS LEGAL\\CONTRATOS\\` y **no se "
+        "registra** el número de Membresía en el historial — útil para probar la app sin "
+        "ensuciar los datos reales. "
         "Es una configuración compartida (afecta a cualquiera que use la app, no solo a vos), "
         "y queda prendida hasta que alguien la apague — por eso todas las páginas muestran un "
         "aviso 🧪 bien visible mientras está activa."

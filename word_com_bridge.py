@@ -261,7 +261,40 @@ def _capturar_rango_como_png(excel, hoja, hoja_excel, rango, rango_obj):
     )
 
 
-def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_word):
+def _recortar_documento_word_abierto(word, doc, max_paginas):
+    """Con 'doc' ya abierto en una sesión de Word real (y su App 'word'),
+    borra el contenido desde el inicio de la página max_paginas+1 hasta el
+    final SI el documento tiene más de 'max_paginas' páginas en este
+    momento. NO guarda el documento -- eso queda a cargo del llamador,
+    para poder guardar junto con otros cambios hechos en la misma sesión
+    (ej. imágenes recién pegadas) en un solo doc.Save(), en vez de abrir
+    Word de nuevo aparte solo para esto. Devuelve True si recortó algo.
+
+    El llamador es responsable de haber forzado ya la vista de impresión
+    (doc.ActiveWindow.View.Type = WD_PRINT_VIEW) antes de llamar a esto,
+    para que ComputeStatistics calcule la paginación real."""
+    total_paginas = _com_retry(
+        lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
+        descripcion="Word ComputeStatistics (para recortar páginas sobrantes)",
+    )
+    if total_paginas <= max_paginas:
+        return False
+
+    seleccion = word.Selection
+    _com_retry(
+        lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=max_paginas + 1),
+        descripcion=f"Word GoTo página {max_paginas + 1} (recorte de páginas sobrantes)",
+    )
+    _com_retry(
+        lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
+        descripcion="Word Collapse (recorte de páginas sobrantes)",
+    )
+    rango_sobrante = doc.Range(Start=seleccion.Start, End=doc.Content.End)
+    _com_retry(lambda: rango_sobrante.Delete(), descripcion="Word borrar páginas sobrantes")
+    return True
+
+
+def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_word, max_paginas=None):
     """Abre Excel y Word de verdad UNA sola vez, y pega en el Word varios
     rangos de Excel como imagen, uno por cada elemento de
     'especificaciones' (lista de tuplas (hoja_excel, rango, numero_pagina)),
@@ -270,6 +303,11 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     cualquier rango falla, no se guarda nada, para no dejar el documento
     con solo algunas imágenes pegadas a medias. Requiere Windows + Excel +
     Word instalados; usa pywin32.
+
+    Si 'max_paginas' no es None, ANTES de guardar recorta el documento a
+    ese máximo de páginas en esta MISMA sesión de Word (ver
+    _recortar_documento_word_abierto) -- así, cuando además hay que pegar
+    imágenes, se evita abrir Word una segunda vez solo para el recorte.
 
     Detalles importantes para que el pegado sea confiable de verdad
     (no solo "en teoría"):
@@ -521,6 +559,9 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
         # grabado en el archivo de todos modos.
         _com_retry(lambda: setattr(excel.ActiveWindow, "Zoom", 100), descripcion="Excel Zoom (restaurar a 100%)")
 
+        if max_paginas is not None:
+            _recortar_documento_word_abierto(word, doc, max_paginas)
+
         _com_retry(lambda: doc.Save(), descripcion="Word doc.Save()")
     finally:
         if doc is not None:
@@ -547,14 +588,20 @@ def pegar_rango_excel_como_imagen_en_word(ruta_excel, hoja_excel, rango, ruta_wo
     pegar_rangos_excel_como_imagen_en_word(ruta_excel, [(hoja_excel, rango, numero_pagina)], ruta_word)
 
 
-def agregar_imagenes_a_contrato(excel_bytes, docx_bytes, especificaciones):
+def agregar_imagenes_a_contrato(excel_bytes, docx_bytes, especificaciones, max_paginas=None):
     """Envoltorio 'en memoria': recibe los bytes del Excel y del Word ya
     procesado, los escribe a archivos temporales (pywin32 necesita
     archivos reales en disco, no streams en memoria), llama a
     pegar_rangos_excel_como_imagen_en_word con TODAS las 'especificaciones'
     (lista de (hoja, rango, pagina)) en una sola sesión de Excel/Word, y
     devuelve los bytes del Word final. Limpia los archivos temporales al
-    terminar."""
+    terminar.
+
+    Si 'max_paginas' no es None, se lo pasa a
+    pegar_rangos_excel_como_imagen_en_word para recortar el documento a ese
+    máximo de páginas en la MISMA sesión de Word, en vez de necesitar abrir
+    Word de nuevo aparte para eso (ver recortar_contrato_a_maximo_paginas,
+    para cuando NO hay imágenes que pegar)."""
     tmp_excel = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     tmp_word = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
     try:
@@ -564,7 +611,8 @@ def agregar_imagenes_a_contrato(excel_bytes, docx_bytes, especificaciones):
         tmp_word.close()
 
         pegar_rangos_excel_como_imagen_en_word(
-            os.path.abspath(tmp_excel.name), especificaciones, os.path.abspath(tmp_word.name)
+            os.path.abspath(tmp_excel.name), especificaciones, os.path.abspath(tmp_word.name),
+            max_paginas=max_paginas,
         )
 
         with open(tmp_word.name, "rb") as f:
@@ -623,23 +671,8 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
         # mismo en pegar_rangos_excel_como_imagen_en_word: con la app
         # invisible, Word no calcula bien la paginación real).
         _com_retry(lambda: setattr(doc.ActiveWindow.View, "Type", WD_PRINT_VIEW))
-        total_paginas = _com_retry(
-            lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
-            descripcion="Word ComputeStatistics (para recortar páginas sobrantes)",
-        )
 
-        if total_paginas > max_paginas:
-            seleccion = word.Selection
-            _com_retry(
-                lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=max_paginas + 1),
-                descripcion=f"Word GoTo página {max_paginas + 1} (recorte de páginas sobrantes)",
-            )
-            _com_retry(
-                lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
-                descripcion="Word Collapse (recorte de páginas sobrantes)",
-            )
-            rango_sobrante = doc.Range(Start=seleccion.Start, End=doc.Content.End)
-            _com_retry(lambda: rango_sobrante.Delete(), descripcion="Word borrar páginas sobrantes")
+        if _recortar_documento_word_abierto(word, doc, max_paginas):
             _com_retry(lambda: doc.Save(), descripcion="Word doc.Save() (tras recortar páginas sobrantes)")
 
         with open(ruta_word, "rb") as f:

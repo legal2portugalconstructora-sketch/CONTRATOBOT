@@ -14,8 +14,11 @@ son números de ejemplo. Si todavía no se generó ningún contrato, se
 muestran en cero de forma explícita, no se inventa nada.
 """
 
+import unicodedata
+
 import streamlit as st
 from dotenv import load_dotenv
+from rapidfuzz import fuzz
 
 from auth_utils import requerir_login, mostrar_boton_logout
 from ui_utils import mostrar_logo, RUTA_LOGO, MODULOS, ACCIONES_RAPIDAS, PREGUNTAS_FRECUENTES
@@ -357,11 +360,35 @@ st.markdown('</div>', unsafe_allow_html=True)
 # pages/4_🤖CONTRATO_Ayuda.py, así que si mañana se agrega una pregunta
 # nueva ahí, también aparece acá sin tocar este archivo).
 # =========================================================================
-termino = (busqueda or "").strip().lower()
+# Umbral de coincidencia difusa (0 a 100, escala de rapidfuzz.fuzz): con
+# esto alcanza para tolerar errores de tipeo chicos (ej. "membressia") sin
+# empezar a traer resultados que no tienen nada que ver con lo buscado.
+UMBRAL_COINCIDENCIA_DIFUSA = 70
+
+
+def _normalizar_busqueda(texto):
+    """Minúsculas y sin tildes -- para que "membresia" (sin tilde, muy común
+    al escribir rápido) encuentre igual "membresía", y separado de la
+    coincidencia difusa en sí (que ya de por sí tolera errores de tipeo,
+    pero no está pensada para la falta sistemática de tildes del español)."""
+    texto = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in texto if not unicodedata.combining(c)).lower()
+
+
+termino = _normalizar_busqueda(busqueda)
 
 
 def _coincide(texto_a, texto_b=""):
-    return termino in texto_a.lower() or termino in texto_b.lower()
+    if not termino:
+        return True
+    combinado = _normalizar_busqueda(f"{texto_a} {texto_b}")
+    if termino in combinado:
+        return True
+    # Antes de esto, la búsqueda pedía coincidencia EXACTA de substring: un
+    # solo error de tipeo (ej. "membresia" -> "menbresia") no encontraba
+    # nada. fuzz.partial_ratio compara el término contra la mejor porción
+    # del texto que se le parezca, así que tolera esos errores chicos.
+    return fuzz.partial_ratio(termino, combinado) >= UMBRAL_COINCIDENCIA_DIFUSA
 
 
 modulos_filtrados = (

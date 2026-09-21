@@ -116,6 +116,22 @@ PREGUNTAS_FRECUENTES = [
             "la app."
         ),
     },
+    {
+        "pregunta": "¿Dónde se guardan copias de los contratos generados?",
+        "respuesta": (
+            "Solas, en `C:\\JESUS LEGAL\\CONTRATOS\\<proyecto>\\<lote> <nombre del cliente>\\`, "
+            "cada vez que descargás un Excel o Word y la app pudo leer el lote y el nombre del "
+            "cliente. Ver el apartado \"¿Qué es el archivo histórico?\" de la página de Ayuda."
+        ),
+    },
+    {
+        "pregunta": "¿Por qué el CONTRATO nunca tiene más de 15 páginas?",
+        "respuesta": (
+            "La plantilla está diseñada para ocupar exactamente 15 páginas; a veces un nombre "
+            "u otro dato muy largo hace que el texto se corra a una página 16 casi vacía al "
+            "final. La app la detecta y la borra sola antes de mostrar el resultado."
+        ),
+    },
 ]
 
 
