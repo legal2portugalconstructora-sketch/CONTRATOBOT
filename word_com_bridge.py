@@ -153,6 +153,30 @@ def _com_retry(funcion, intentos=8, espera=0.5, descripcion=None, reintentar_cua
     raise ultimo_error
 
 
+def _cerrar_sin_fallar(funcion):
+    """Ejecuta 'funcion' (un lambda de limpieza -- Close()/Quit() de un
+    documento/aplicación COM) SOLO dentro de un 'finally', e ignora
+    cualquier error que quede tras reintentarla unas pocas veces.
+
+    Hace falta porque en Python, si el bloque 'finally' de un try/finally
+    lanza una excepción, esa excepción REEMPLAZA silenciosamente lo que
+    haya pasado en el 'try' -- incluso un 'return' con el resultado ya
+    listo. Sin esto, un error transitorio de COM al cerrar Excel/Word
+    (ej. "Excel.Application.Quit" con AttributeError, visto en la
+    práctica cuando la app tarda un instante en quedar lista para recibir
+    la llamada) tapaba un procesamiento que en realidad había terminado
+    BIEN, y la app le mostraba al usuario un error de "no se pudo
+    recalcular/procesar" sobre un archivo que sí se generó correctamente.
+    Cerrar la aplicación es de todos modos best-effort: si falla incluso
+    reintentando, el proceso de Excel/Word queda huérfano en segundo
+    plano (recuperable a mano), pero eso es preferible a perder un
+    resultado válido o un error real más útil."""
+    try:
+        _com_retry(funcion, intentos=3, espera=0.3, reintentar_cualquier_error=True)
+    except Exception:
+        pass
+
+
 def _imagen_esta_en_blanco(ruta_png):
     """True si 'ruta_png' es una imagen de UN SOLO color liso de punta a
     punta -- señal de que la "foto" de la pantalla salió en blanco (ver
@@ -222,7 +246,7 @@ def _capturar_rango_como_png(excel, hoja, hoja_excel, rango, rango_obj):
                 exito, ruta_png = ruta_png, None  # que el finally no la borre: se devuelve
                 return exito
         finally:
-            chart_obj.Delete()
+            _cerrar_sin_fallar(lambda: chart_obj.Delete())
             if ruta_png is not None:
                 try:
                     os.remove(ruta_png)
@@ -500,13 +524,13 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
         _com_retry(lambda: doc.Save(), descripcion="Word doc.Save()")
     finally:
         if doc is not None:
-            doc.Close(SaveChanges=False)
+            _cerrar_sin_fallar(lambda: doc.Close(SaveChanges=False))
         if word is not None:
-            word.Quit()
+            _cerrar_sin_fallar(lambda: word.Quit())
         if wb is not None:
-            wb.Close(SaveChanges=False)
+            _cerrar_sin_fallar(lambda: wb.Close(SaveChanges=False))
         if excel is not None:
-            excel.Quit()
+            _cerrar_sin_fallar(lambda: excel.Quit())
         # Deshacer el pedido de "no apagar la pantalla/no suspender" de
         # más arriba -- sin el flag ES_CONTINUOUS solo (sin
         # ES_SYSTEM_REQUIRED/ES_DISPLAY_REQUIRED), Windows vuelve a su
@@ -622,9 +646,9 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
             return f.read()
     finally:
         if doc is not None:
-            doc.Close(SaveChanges=False)
+            _cerrar_sin_fallar(lambda: doc.Close(SaveChanges=False))
         if word is not None:
-            word.Quit()
+            _cerrar_sin_fallar(lambda: word.Quit())
         pythoncom.CoUninitialize()
         try:
             os.remove(ruta_word)
@@ -713,9 +737,9 @@ def recalcular_excel_con_com(excel_bytes):
             return f.read()
     finally:
         if wb is not None:
-            wb.Close(SaveChanges=False)
+            _cerrar_sin_fallar(lambda: wb.Close(SaveChanges=False))
         if excel is not None:
-            excel.Quit()
+            _cerrar_sin_fallar(lambda: excel.Quit())
         pythoncom.CoUninitialize()
         try:
             os.remove(tmp_excel.name)
@@ -777,9 +801,9 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
             return f.read()
     finally:
         if doc is not None:
-            doc.Close(SaveChanges=False)
+            _cerrar_sin_fallar(lambda: doc.Close(SaveChanges=False))
         if word is not None:
-            word.Quit()
+            _cerrar_sin_fallar(lambda: word.Quit())
         pythoncom.CoUninitialize()
         for ruta in (tmp_docx.name, tmp_pdf.name):
             try:
