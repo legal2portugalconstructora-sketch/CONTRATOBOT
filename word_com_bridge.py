@@ -784,8 +784,6 @@ def recalcular_excel_con_com(excel_bytes):
             pass
 
 
-WD_FORMAT_PDF = 17  # wdFormatPDF
-
 
 def convertir_docx_a_pdf_con_com(docx_bytes):
     """Abre 'docx_bytes' en Word de verdad y lo exporta a PDF tal como se ve
@@ -829,9 +827,29 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
         word.Visible = False
         word.DisplayAlerts = 0  # wdAlertsNone
         doc = _com_retry(lambda: word.Documents.Open(ruta_docx), descripcion="Word Documents.Open (a PDF)")
+        # ExportAsFixedFormat (no el simple doc.SaveAs) a propósito: SaveAs
+        # usa el perfil de calidad "para pantalla" por defecto de Word, que
+        # recomprime MUY agresivamente las imágenes pegadas (probado: una
+        # imagen de 4398x7586px quedaba en solo 500x863px, prácticamente
+        # ilegible al hacer zoom). ExportAsFixedFormat con
+        # OptimizeFor=wdExportOptimizeForPrint (0, no wdExportOptimizeFor
+        # OnScreen=1) preserva mucha más resolución real (misma imagen de
+        # prueba: 1043x1799px, ~4x más píxeles), a cambio de un PDF apenas
+        # más pesado.
+        WD_EXPORT_FORMAT_PDF = 17            # WdExportFormat.wdExportFormatPDF
+        WD_EXPORT_OPTIMIZE_FOR_PRINT = 0     # WdExportOptimizeFor.wdExportOptimizeForPrint
+        WD_EXPORT_ALL_DOCUMENT = 0           # WdExportRange.wdExportAllDocument
+        WD_EXPORT_DOCUMENT_CONTENT = 0       # WdExportItem.wdExportDocumentContent
         _com_retry(
-            lambda: doc.SaveAs(ruta_pdf, FileFormat=WD_FORMAT_PDF),
-            descripcion="Word doc.SaveAs (a PDF)",
+            lambda: doc.ExportAsFixedFormat(
+                OutputFileName=ruta_pdf,
+                ExportFormat=WD_EXPORT_FORMAT_PDF,
+                OptimizeFor=WD_EXPORT_OPTIMIZE_FOR_PRINT,
+                Range=WD_EXPORT_ALL_DOCUMENT,
+                Item=WD_EXPORT_DOCUMENT_CONTENT,
+                BitmapMissingFonts=True,
+            ),
+            descripcion="Word doc.ExportAsFixedFormat (a PDF)",
         )
 
         with open(ruta_pdf, "rb") as f:
