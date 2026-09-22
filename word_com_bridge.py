@@ -38,26 +38,6 @@ HOJA_AXE_IMAGEN = "Ax.E"
 RANGO_AXE_IMAGEN = "B2:K73"
 PAGINA_AXE_IMAGEN = 15
 
-# Zoom de la ventana de Excel al hacer CopyPicture(Appearance=xlScreen): esa
-# captura depende de cómo se ve el rango EN PANTALLA en ese momento, así que
-# subir el zoom antes de copiar aumenta los píxeles reales capturados para
-# el mismo rango (a más zoom, más densidad de píxeles), sin cambiar el
-# tamaño físico del rango ni requerir ningún otro cambio. 400% es el
-# MÁXIMO que permite Excel (Window.Zoom rechaza cualquier valor mayor con
-# un error de COM) -- da ~384 DPI, contra ~288 DPI de 300%. Genera PNG más
-# pesados (probado: ~6.4MB contra ~3.7MB para el rango grande de Ax.A) y
-# tarda más en exportar cada imagen (~4s contra ~1.9s), pero es una mejora
-# real de nitidez y sigue siendo el mismo método (CopyPicture + Chart.Paste
-# + Chart.Export), sin depender de nada nuevo.
-ZOOM_CAPTURA_IMAGEN = 400
-
-# Constantes numéricas fijas de Excel (documentadas por Microsoft), en vez
-# de win32com.client.constants.*, para no depender del orden de dispatch.
-# A nivel de módulo (no solo dentro de una función) porque las necesitan
-# tanto pegar_rangos_excel_como_imagen_en_word como _capturar_rango_como_png.
-XL_SCREEN = 1                    # XlPictureAppearance.xlScreen
-XL_BITMAP = 2                    # XlCopyPictureFormat.xlBitmap
-
 # XlCorruptLoad.xlRepairFile -- le pide a Excel que intente reparar el
 # archivo si hace falta al abrirlo, en vez de fallar directo. Hace falta
 # para algunos Excel reales (ej. con hojas/vínculos externos más
@@ -79,6 +59,7 @@ WD_GOTO_ABSOLUTE = 1             # WdGoToDirection.wdGoToAbsolute
 WD_COLLAPSE_START = 1            # WdCollapseDirection.wdCollapseStart
 WD_STATISTIC_PAGES = 2           # WdStatistic.wdStatisticPages
 WD_PRINT_VIEW = 3                # WdViewType.wdPrintView
+WD_PASTE_ENHANCED_METAFILE = 9   # WdPasteDataType.wdPasteEnhancedMetafile
 
 # El CONTRATO está diseñado para ocupar exactamente 15 páginas (la última
 # imagen pegada, la de "Ax.E", va en la página 15 -- ver PAGINA_AXE_IMAGEN
@@ -87,15 +68,6 @@ WD_PRINT_VIEW = 3                # WdViewType.wdPrintView
 # (con muy poco o nada de contenido real) -- ver
 # recortar_contrato_a_maximo_paginas, que la borra siempre.
 MAX_PAGINAS_CONTRATO = 15
-
-# Cuántas veces reintentar la captura de UN rango si sale "en blanco" (ver
-# _imagen_esta_en_blanco) antes de rendirse con un error claro. La causa
-# más probable de una captura en blanco es que la pantalla de esta
-# computadora no estuviera realmente dibujada en ese instante (bloqueada,
-# en reposo, o una sesión de Escritorio Remoto desconectada) -- ver la
-# nota junto a Appearance=XL_SCREEN más abajo.
-_MAX_REINTENTOS_CAPTURA_BLANCO = 3
-
 
 def _en_windows():
     return os.name == "nt"
@@ -181,90 +153,6 @@ def _cerrar_sin_fallar(funcion):
         pass
 
 
-def _imagen_esta_en_blanco(ruta_png):
-    """True si 'ruta_png' es una imagen de UN SOLO color liso de punta a
-    punta -- señal de que la "foto" de la pantalla salió en blanco (ver
-    la nota junto a Appearance=XL_SCREEN en
-    pegar_rangos_excel_como_imagen_en_word) en vez de mostrar el
-    contenido real del rango. Un rango real, aunque tenga pocos datos,
-    siempre tiene algo de variación (bordes, cuadrícula, texto), así que
-    exigir un solo color exacto no debería dar falsos positivos con
-    capturas válidas."""
-    from PIL import Image
-
-    with Image.open(ruta_png) as imagen:
-        extremos = imagen.convert("RGB").getextrema()
-    # getextrema() de una imagen RGB devuelve ((min_r,max_r),(min_g,max_g),
-    # (min_b,max_b)); si en las 3 bandas el mínimo es igual al máximo, la
-    # imagen entera es un solo color (sin ninguna variación de píxel a píxel).
-    return all(minimo == maximo for minimo, maximo in extremos)
-
-
-def _capturar_rango_como_png(excel, hoja, hoja_excel, rango, rango_obj):
-    """Copia 'rango_obj' como imagen (CopyPicture -> pegarlo en un Chart
-    temporal -> Chart.Export a PNG -- ver la nota larga más abajo sobre
-    por qué se hace así en vez de exportar directo), reintentando hasta
-    _MAX_REINTENTOS_CAPTURA_BLANCO veces SI la imagen exportada sale en
-    blanco (ver _imagen_esta_en_blanco). Devuelve la ruta del .png (el
-    llamador es responsable de borrarlo). Lanza RuntimeError con un
-    mensaje claro si sigue en blanco después de todos los reintentos."""
-    for intento in range(1, _MAX_REINTENTOS_CAPTURA_BLANCO + 1):
-        _com_retry(
-            lambda: rango_obj.CopyPicture(Appearance=XL_SCREEN, Format=XL_BITMAP),
-            descripcion=f"Excel CopyPicture {hoja_excel}!{rango} (intento {intento})",
-        )
-
-        chart_obj = hoja.ChartObjects().Add(
-            rango_obj.Left, rango_obj.Top + rango_obj.Height + 20,
-            rango_obj.Width, rango_obj.Height,
-        )
-        chart = chart_obj.Chart
-        ruta_png = None
-        try:
-            _com_retry(
-                lambda: chart_obj.Activate(),
-                descripcion=f"ChartObject.Activate {hoja_excel}!{rango} (intento {intento})",
-            )
-            _com_retry(
-                lambda: chart.Paste(),
-                descripcion=f"Chart.Paste {hoja_excel}!{rango} (intento {intento})",
-                reintentar_cualquier_error=True,
-            )
-            excel.CutCopyMode = False
-
-            tmp_png = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-            tmp_png.close()
-            ruta_png = os.path.abspath(tmp_png.name)
-            _com_retry(
-                lambda: chart.Export(Filename=ruta_png, FilterName="PNG"),
-                descripcion=f"Chart.Export {hoja_excel}!{rango} (intento {intento})",
-            )
-
-            if not os.path.exists(ruta_png) or os.path.getsize(ruta_png) == 0:
-                raise RuntimeError(
-                    f"No se pudo generar la imagen del rango '{hoja_excel}!{rango}': el "
-                    f"archivo PNG exportado desde Excel no existe o está vacío."
-                )
-
-            if not _imagen_esta_en_blanco(ruta_png):
-                exito, ruta_png = ruta_png, None  # que el finally no la borre: se devuelve
-                return exito
-        finally:
-            _cerrar_sin_fallar(lambda: chart_obj.Delete())
-            if ruta_png is not None:
-                try:
-                    os.remove(ruta_png)
-                except OSError:
-                    pass
-
-    raise RuntimeError(
-        f"La imagen de '{hoja_excel}!{rango}' salió en blanco {_MAX_REINTENTOS_CAPTURA_BLANCO} "
-        f"veces seguidas. Es casi seguro que la pantalla de esta computadora no estuvo "
-        f"realmente visible mientras se procesaba (bloqueada, en reposo, o una sesión de "
-        f"Escritorio Remoto desconectada) -- evitá eso y volvé a procesar el contrato."
-    )
-
-
 def _recortar_documento_word_abierto(word, doc, max_paginas):
     """Con 'doc' ya abierto en una sesión de Word real (y su App 'word'),
     borra el contenido desde el inicio de la página max_paginas+1 hasta el
@@ -313,12 +201,36 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     _recortar_documento_word_abierto) -- así, cuando además hay que pegar
     imágenes, se evita abrir Word una segunda vez solo para el recorte.
 
+    CÓMO SE PEGA CADA RANGO (reemplaza el método anterior, basado en
+    captura de pantalla + PNG): se copia el rango con Range.Copy() normal
+    (lo mismo que Ctrl+C) y se pega en Word con Selection.PasteSpecial(
+    DataType=wdPasteEnhancedMetafile) -- el mismo mecanismo que usa Word
+    cuando alguien pega "a mano" un rango de Excel como imagen. Ventajas
+    confirmadas con pruebas reales contra el método anterior:
+      - Nitidez SIN límite de resolución: un EMF es vectorial (guarda
+        instrucciones de dibujo, no una cuadrícula de píxeles), así que se
+        redibuja nítido a cualquier tamaño/zoom/impresión. El método
+        anterior dependía del zoom de pantalla de Excel al capturar (tope
+        duro de 400%).
+      - Archivos mucho más livianos (decenas de KB contra varios MB por
+        imagen, probado con los rangos grandes de "Ax.A").
+      - NO depende de que la pantalla esté realmente dibujada (probado con
+        Excel y Word ambos invisibles) -- el método anterior (CopyPicture
+        con Appearance=xlScreen) fallaba con capturas en blanco si la
+        sesión estaba bloqueada o una sesión de Escritorio Remoto se
+        desconectaba a mitad del proceso; esa clase de bug ya no puede
+        pasar con este método.
+    Selection.PasteSpecial deja una figura FLOTANTE (no incrustada en el
+    texto); se convierte a InlineShape con Shape.ConvertToInlineShape()
+    justo después, para que quede anclada en la posición del cursor (igual
+    que hacía AddPicture antes) y para reusar la misma lógica de ajuste de
+    ancho de acá abajo.
+
     Detalles importantes para que el pegado sea confiable de verdad
     (no solo "en teoría"):
-      - Mantiene Excel y Word VISIBLES mientras procesa. Con las apps
-        invisibles, Word no calcula bien la paginación real y el copiado
-        al portapapeles desde Excel es menos confiable — esto es lo más
-        probable que causó que "no apareciera nada".
+      - Mantiene Excel y Word VISIBLES mientras procesa: Word no calcula
+        bien la paginación real (ComputeStatistics, ver más abajo) con las
+        apps invisibles, aunque el pegado en sí ya no lo necesite.
       - Antes de navegar a CADA página, recalcula cuántas páginas tiene
         REALMENTE el documento en ese momento (con ComputeStatistics):
         como las imágenes anteriores de esta misma sesión pueden haber
@@ -331,7 +243,7 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
       - Usa números de constante fijos (no win32com.client.constants),
         que a veces no se resuelven bien según el orden en que se hace
         EnsureDispatch de cada aplicación.
-      - Verifica, contando las imágenes del documento antes y después de
+      - Verifica, contando las figuras del documento antes y después de
         CADA rango, que el pegado realmente insertó algo; si no, lanza un
         error en vez de guardar el documento sin cambios silenciosamente.
     """
@@ -359,17 +271,13 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     # pywintypes.com_error, aunque pywin32 esté bien instalado.
     pythoncom.CoInitialize()
 
-    # El pegado de imágenes depende de que la pantalla de ESTA computadora
-    # esté realmente dibujada en pantalla en el momento de cada captura
-    # (ver la nota junto a Appearance=XL_SCREEN, más abajo) -- si Windows
-    # apaga la pantalla o suspende el equipo por inactividad a mitad del
-    # proceso, las capturas salen en blanco. SetThreadExecutionState le
-    # pide a Windows que NO haga eso mientras dure este hilo. ES_CONTINUOUS
+    # Evita que Windows apague la pantalla/suspenda el equipo por
+    # inactividad a mitad de un procesamiento de varios segundos. Ya no
+    # hace falta para que el pegado en sí funcione (ver nota grande
+    # arriba), pero de todos modos conviene que la máquina no se suspenda
+    # sola mientras Excel/Word están siendo automatizados. ES_CONTINUOUS
     # hace que el pedido quede activo hasta el próximo llamado (el de
     # abajo, en el finally, que lo saca) en vez de expirar solo.
-    # OJO: esto NO evita que alguien bloquee la sesión a mano (Win+L) ni
-    # que se desconecte una sesión de Escritorio Remoto -- Windows no deja
-    # prevenir eso desde un proceso en segundo plano, por seguridad.
     ES_CONTINUOUS = 0x80000000
     ES_SYSTEM_REQUIRED = 0x00000001
     ES_DISPLAY_REQUIRED = 0x00000002
@@ -379,6 +287,8 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
 
     ruta_excel = os.path.abspath(ruta_excel)
     ruta_word = os.path.abspath(ruta_word)
+
+    MSO_TRUE = -1  # msoTrue
 
     excel = None
     word = None
@@ -424,144 +334,95 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
             except Exception as exc:
                 raise ValueError(f"El rango '{rango}' no es válido en la hoja '{hoja_excel}'.") from exc
 
-            # Range.CopyPicture necesita que su hoja esté ACTIVA en Excel en
-            # ese momento; si no lo está (ej. porque el rango anterior era de
+            # Range.Copy() necesita que su hoja esté ACTIVA en Excel en ese
+            # momento; si no lo está (ej. porque el rango anterior era de
             # otra hoja, o la hoja activa al abrir el archivo era otra),
-            # falla con el error 1004 de Excel ("Application-defined or
-            # object-defined error", que pywin32 reporta como
-            # "-2147352567 (...) -2146827284"). Application.Goto con
+            # falla con el error 1004 de Excel. Application.Goto con
             # Scroll=True activa la hoja Y desplaza la vista para que el
             # rango quede visible, que es la forma estándar de evitar eso.
-            excel.Goto(rango_obj, True)
+            _com_retry(lambda: excel.Goto(rango_obj, True), descripcion=f"Excel Goto ({hoja_excel}!{rango})")
+            _com_retry(lambda: rango_obj.Copy(), descripcion=f"Excel Copy ({hoja_excel}!{rango})")
 
-            # Subir el zoom ANTES de CopyPicture (ver nota junto a
-            # ZOOM_CAPTURA_IMAGEN, arriba): la apariencia de pantalla se
-            # captura con más densidad de píxeles a mayor zoom, para el
-            # mismo rango y el mismo tamaño físico final. Hace falta un
-            # SEGUNDO Goto después de cambiar el zoom -- sin esto, la vista
-            # no termina de "ponerse al día" con el nuevo zoom antes de
-            # CopyPicture, y la captura sale con menos densidad de píxeles
-            # de la esperada (confirmado empíricamente).
+            # Paginación real recalculada para ESTE rango (ver nota arriba
+            # sobre por qué no alcanza con calcularla una sola vez al inicio).
+            total_paginas = _com_retry(
+                lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
+                descripcion=f"Word ComputeStatistics (antes de {hoja_excel}!{rango})",
+            )
+            if numero_pagina > total_paginas:
+                raise ValueError(
+                    f"El documento solo tiene {total_paginas} página(s) en este momento; "
+                    f"no existe la página {numero_pagina} para pegar '{hoja_excel}!{rango}' ahí. "
+                    f"(Si el CONTRATO quedó más corto/largo tras cambios anteriores, puede que "
+                    f"ya no llegue a esa página; dime a qué página debería ir en ese caso.)"
+                )
+
+            figuras_antes = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+
+            seleccion = word.Selection
+            # Ir al inicio de la página indicada, usando la paginación real
+            # de Word (igual que Ctrl+G -> Página -> 10 -> Ir a).
             _com_retry(
-                lambda: setattr(excel.ActiveWindow, "Zoom", ZOOM_CAPTURA_IMAGEN),
-                descripcion=f"Excel Zoom (para {hoja_excel}!{rango})",
+                lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=numero_pagina),
+                descripcion=f"Word GoTo página {numero_pagina} (para {hoja_excel}!{rango})",
             )
             _com_retry(
-                lambda: excel.Goto(rango_obj, True),
-                descripcion=f"Excel Goto tras cambiar zoom ({hoja_excel}!{rango})",
+                lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
+                descripcion=f"Word Collapse (para {hoja_excel}!{rango})",
+            )
+            # reintentar_cualquier_error=True: el portapapeles puede tardar
+            # un instante en terminar de poblarse para rangos grandes --
+            # pegar justo después a veces falla la primera vez.
+            _com_retry(
+                lambda: seleccion.PasteSpecial(DataType=WD_PASTE_ENHANCED_METAFILE),
+                descripcion=f"Word PasteSpecial EMF ({hoja_excel}!{rango} → página {numero_pagina})",
+                reintentar_cualquier_error=True,
             )
 
-            # Se usa Range.CopyPicture (no Range.Copy()) a propósito: el
-            # contenido copiado se va a pegar con Chart.Paste() dentro de un
-            # gráfico temporal, y Chart.Paste() SOLO pega una imagen si el
-            # portapapeles contiene una imagen. Si se copiara el rango con
-            # Copy() normal (datos de celda), Chart.Paste() no lo pega como
-            # imagen: lo interpreta como una serie de datos nueva para
-            # graficar, y el resultado es un gráfico con barras/líneas
-            # generado a partir de los valores de las celdas — la "imagen
-            # rara" que salía antes de este cambio, no una foto del rango.
-            #
-            # El recorte del borde inferior/derecho que normalmente tiene
-            # CopyPicture (problema conocido de ese método al pegarlo o
-            # exportarlo directamente) NO ocurre acá, porque la imagen no se
-            # exporta/pega directamente: se pega dentro de un gráfico (Chart)
-            # temporal y vacío creado en la misma hoja (con el mismo ancho y
-            # alto que el rango), y es Chart.Export (el motor de renderizado
-            # de gráficos, sin ese bug) el que genera el .png final en disco.
-            # Ese gráfico se borra después de exportar, para no dejar basura
-            # en el archivo de Excel original.
-            #
-            # Se usa Format=xlBitmap (raster) en vez de xlPicture (vectorial,
-            # WMF/EMF): para rangos grandes/complejos, xlPicture puede hacer
-            # que Chart.Paste falle con el error 1004 de Excel de forma
-            # consistente (no es un problema de timing: reintentar no lo
-            # arregla). Como de todos modos el resultado final es un .png
-            # (raster) vía Chart.Export, copiar directamente en bitmap no
-            # pierde nada y es más robusto para rangos grandes.
-            #
-            # Toda esta lógica (más el reintento si la captura sale en
-            # blanco -- ver _imagen_esta_en_blanco) vive en
-            # _capturar_rango_como_png para poder reintentarla completa
-            # desde cero (CopyPicture incluido) sin repetir el código acá.
-            ruta_png = _capturar_rango_como_png(excel, hoja, hoja_excel, rango, rango_obj)
-            try:
-                # Paginación real recalculada para ESTE rango (ver nota arriba
-                # sobre por qué no alcanza con calcularla una sola vez al inicio).
-                total_paginas = _com_retry(
-                    lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
-                    descripcion=f"Word ComputeStatistics (antes de {hoja_excel}!{rango})",
+            cantidad_shapes = _com_retry(lambda: doc.Shapes.Count)
+            if cantidad_shapes == 0:
+                raise RuntimeError(
+                    f"El pegado de '{hoja_excel}!{rango}' no insertó ninguna imagen nueva en el "
+                    f"documento. Puede que otra aplicación haya usado el portapapeles justo en ese "
+                    f"momento; intenta de nuevo sin tocar el mouse/teclado mientras se procesa."
                 )
-                if numero_pagina > total_paginas:
-                    raise ValueError(
-                        f"El documento solo tiene {total_paginas} página(s) en este momento; "
-                        f"no existe la página {numero_pagina} para pegar '{hoja_excel}!{rango}' ahí. "
-                        f"(Si el CONTRATO quedó más corto/largo tras cambios anteriores, puede que "
-                        f"ya no llegue a esa página; dime a qué página debería ir en ese caso.)"
-                    )
+            forma_flotante = _com_retry(lambda: doc.Shapes(cantidad_shapes))
+            # ConvertToInlineShape ancla la figura recién pegada en la
+            # posición del cursor (igual que hacía AddPicture antes), en vez
+            # de dejarla flotando con posición absoluta en la página.
+            imagen_insertada = _com_retry(
+                lambda: forma_flotante.ConvertToInlineShape(),
+                descripcion=f"Word ConvertToInlineShape ({hoja_excel}!{rango})",
+            )
 
-                figuras_antes = doc.InlineShapes.Count + doc.Shapes.Count
-
-                seleccion = word.Selection
-                # Ir al inicio de la página indicada, usando la paginación real
-                # de Word (igual que Ctrl+G -> Página -> 10 -> Ir a).
+            # La imagen se inserta a su tamaño NATIVO, sin importar el ancho
+            # de la página. Para rangos anchos (ej. columnas B:N de "Ax.A",
+            # ~11 pulgadas) esto la deja más ancha que el área útil de la
+            # página (márgen a márgen) -- se sale del márgen derecho y queda
+            # "cortada" visualmente en vez de reducida para que quepa. Se
+            # reescala manteniendo la proporción (LockAspectRatio) SOLO si
+            # hace falta, para no agrandar imágenes que ya entran bien (y
+            # como es vectorial, reescalarla no le pierde nitidez).
+            ancho_disponible = _com_retry(
+                lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
+                descripcion=f"Word PageSetup (para {hoja_excel}!{rango})",
+            )
+            if imagen_insertada.Width > ancho_disponible:
                 _com_retry(
-                    lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=numero_pagina),
-                    descripcion=f"Word GoTo página {numero_pagina} (para {hoja_excel}!{rango})",
+                    lambda: setattr(imagen_insertada, "LockAspectRatio", MSO_TRUE),
+                    descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
                 )
                 _com_retry(
-                    lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
-                    descripcion=f"Word Collapse (para {hoja_excel}!{rango})",
-                )
-                # Insertar el .png exportado como imagen en la posición actual del cursor.
-                imagen_insertada = _com_retry(
-                    lambda: seleccion.InlineShapes.AddPicture(FileName=ruta_png),
-                    descripcion=f"Word AddPicture {hoja_excel}!{rango} → página {numero_pagina}",
+                    lambda: setattr(imagen_insertada, "Width", ancho_disponible),
+                    descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
                 )
 
-                # AddPicture inserta la imagen a su tamaño NATIVO (según el DPI
-                # del .png exportado), sin importar el ancho de la página. Para
-                # rangos anchos (ej. columnas B:N de "Ax.A", ~11 pulgadas) esto
-                # la deja más ancha que el área útil de la página (márgen a
-                # márgen) -- se sale del márgen derecho y queda "cortada"
-                # visualmente en vez de reducida para que quepa. Se reescala
-                # manteniendo la proporción (LockAspectRatio) SOLO si hace
-                # falta, para no agrandar imágenes que ya entran bien.
-                MSO_TRUE = -1  # msoTrue
-                ancho_disponible = _com_retry(
-                    lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
-                    descripcion=f"Word PageSetup (para {hoja_excel}!{rango})",
+            figuras_despues = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+            if figuras_despues <= figuras_antes:
+                raise RuntimeError(
+                    f"El pegado de '{hoja_excel}!{rango}' no dejó ninguna imagen nueva en el "
+                    f"documento después de convertirla. Volvé a intentar procesando el contrato."
                 )
-                if imagen_insertada.Width > ancho_disponible:
-                    _com_retry(
-                        lambda: setattr(imagen_insertada, "LockAspectRatio", MSO_TRUE),
-                        descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
-                    )
-                    _com_retry(
-                        lambda: setattr(imagen_insertada, "Width", ancho_disponible),
-                        descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
-                    )
-
-                figuras_despues = doc.InlineShapes.Count + doc.Shapes.Count
-                if figuras_despues <= figuras_antes:
-                    raise RuntimeError(
-                        f"El pegado de '{hoja_excel}!{rango}' no insertó ninguna imagen nueva en el "
-                        f"documento. Puede que otra aplicación haya usado el portapapeles justo en ese "
-                        f"momento; intenta de nuevo sin tocar el mouse/teclado mientras se procesa."
-                    )
-            finally:
-                # El chart temporal ya se borró dentro de
-                # _capturar_rango_como_png; acá solo queda limpiar el .png
-                # una vez que Word ya lo usó (AddPicture lo lee del disco).
-                if ruta_png is not None:
-                    try:
-                        os.remove(ruta_png)
-                    except OSError:
-                        pass
-
-        # Devolver el zoom a 100% -- prolijidad nomás, ya que el workbook se
-        # cierra sin guardar (SaveChanges=False) así que esto no queda
-        # grabado en el archivo de todos modos.
-        _com_retry(lambda: setattr(excel.ActiveWindow, "Zoom", 100), descripcion="Excel Zoom (restaurar a 100%)")
 
         if max_paginas is not None:
             _recortar_documento_word_abierto(word, doc, max_paginas)
