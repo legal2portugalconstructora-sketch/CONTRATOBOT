@@ -42,10 +42,14 @@ PAGINA_AXE_IMAGEN = 15
 # captura depende de cómo se ve el rango EN PANTALLA en ese momento, así que
 # subir el zoom antes de copiar aumenta los píxeles reales capturados para
 # el mismo rango (a más zoom, más densidad de píxeles), sin cambiar el
-# tamaño físico del rango ni requerir ningún otro cambio. 300% da ~288 DPI
-# (de sobra para verse nítido, incluso impreso), sin generar archivos PNG
-# innecesariamente pesados como pasa con 400%+.
-ZOOM_CAPTURA_IMAGEN = 300
+# tamaño físico del rango ni requerir ningún otro cambio. 400% es el
+# MÁXIMO que permite Excel (Window.Zoom rechaza cualquier valor mayor con
+# un error de COM) -- da ~384 DPI, contra ~288 DPI de 300%. Genera PNG más
+# pesados (probado: ~6.4MB contra ~3.7MB para el rango grande de Ax.A) y
+# tarda más en exportar cada imagen (~4s contra ~1.9s), pero es una mejora
+# real de nitidez y sigue siendo el mismo método (CopyPicture + Chart.Paste
+# + Chart.Export), sin depender de nada nuevo.
+ZOOM_CAPTURA_IMAGEN = 400
 
 # Constantes numéricas fijas de Excel (documentadas por Microsoft), en vez
 # de win32com.client.constants.*, para no depender del orden de dispatch.
