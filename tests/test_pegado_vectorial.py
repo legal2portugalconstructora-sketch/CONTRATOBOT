@@ -16,8 +16,14 @@ Esta prueba verifica, con Excel/Word reales:
   - Que la imagen resultante es vectorial (content_type "image/x-emf"),
     no un PNG rasterizado -- si esto falla, es señal de que alguien
     volvió a un método basado en captura de pantalla sin darse cuenta.
-  - Que un rango más ancho que la página se reescala para entrar (la
-    misma lógica de LockAspectRatio que ya existía).
+  - Que un rango CHICO (más chico que la página) se agranda para ocupar
+    el máximo posible -- bug real encontrado el 2026-09-25: al pasar al
+    pegado vectorial, una imagen nativamente más chica que la página se
+    dejaba en su tamaño chico en vez de agrandarla, lo cual además hacía
+    que el CONTRATO completo quedara más corto (14 páginas en vez de 15)
+    y que la última imagen fallara con "no existe la página 15".
+  - Que un rango ANCHO (más ancho que la página) se achica para entrar
+    (la misma lógica de LockAspectRatio que ya existía).
   - Que el recorte a un máximo de páginas (max_paginas) sigue funcionando
     en la misma sesión de Word, ahora con este método de pegado.
 
@@ -39,15 +45,20 @@ from word_com_bridge import agregar_imagenes_a_contrato
 
 
 def _armar_excel_bytes():
-    """Rango B2:U10 (20 columnas) con texto y bordes -- lo bastante ancho
-    como para necesitar reescalarse al pegarlo en una página normal, y con
-    contenido real (no celdas vacías) para que un EMF vacío/roto se note."""
+    """Dos rangos en la misma hoja: uno CHICO (B2:D4, mucho más chico que
+    una página) y uno ANCHO (F2:Y10, 20 columnas -- más ancho que una
+    página), ambos con bordes y contenido real (no celdas vacías) para que
+    un EMF vacío/roto se note."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Datos"
     borde = Border(*([Side(style="thin")] * 4))
+    for fila in range(2, 5):
+        for columna in range(2, 5):  # B2:D4
+            celda = ws.cell(row=fila, column=columna, value=f"F{fila}C{columna}")
+            celda.border = borde
     for fila in range(2, 11):
-        for columna in range(2, 22):
+        for columna in range(6, 26):  # F2:Y10
             celda = ws.cell(row=fila, column=columna, value=f"F{fila}C{columna}")
             celda.border = borde
 
@@ -71,30 +82,47 @@ if __name__ == "__main__":
     excel_bytes = _armar_excel_bytes()
     docx_bytes = _armar_docx_bytes(cantidad_paginas=2)
 
-    especificaciones = [("Datos", "B2:U10", 2)]  # pegar en la página 2
+    especificaciones = [
+        ("Datos", "B2:D4", 1),    # rango CHICO -- pegar en la página 1
+        ("Datos", "F2:Y10", 2),   # rango ANCHO -- pegar en la página 2
+    ]
 
     resultado_bytes = agregar_imagenes_a_contrato(excel_bytes, docx_bytes, especificaciones)
     print("agregar_imagenes_a_contrato no lanzó error -- OK")
 
     doc_resultado = Document(io.BytesIO(resultado_bytes))
-    imagenes = [rel for rel in doc_resultado.part.rels.values() if "image" in rel.reltype]
-    assert len(imagenes) == 1, f"Se esperaba 1 imagen, hay {len(imagenes)}"
-    print("Se pegó exactamente 1 imagen -- OK")
+    imagenes_rels = [rel for rel in doc_resultado.part.rels.values() if "image" in rel.reltype]
+    assert len(imagenes_rels) == 2, f"Se esperaban 2 imágenes, hay {len(imagenes_rels)}"
+    print("Se pegaron exactamente 2 imágenes -- OK")
 
-    content_type = imagenes[0].target_part.content_type
-    assert content_type == "image/x-emf", (
-        f"FALLO: la imagen pegada es '{content_type}', no vectorial (image/x-emf) -- "
-        f"parece que se volvió a un método de captura de pantalla rasterizada."
-    )
-    print(f"La imagen es vectorial ({content_type}), no un PNG rasterizado -- OK")
+    for rel in imagenes_rels:
+        content_type = rel.target_part.content_type
+        assert content_type == "image/x-emf", (
+            f"FALLO: una imagen pegada es '{content_type}', no vectorial (image/x-emf) -- "
+            f"parece que se volvió a un método de captura de pantalla rasterizada."
+        )
+    print("Las 2 imágenes son vectoriales (image/x-emf), no PNG rasterizados -- OK")
 
-    peso_kb = len(imagenes[0].target_part.blob) / 1024
-    print(f"Peso de la imagen: {peso_kb:.0f} KB")
-    assert peso_kb < 500, (
-        f"FALLO: la imagen pesa {peso_kb:.0f} KB, demasiado para un EMF de este tamaño de "
-        f"rango -- señal de que no está saliendo vectorial de verdad."
+    # Ancho útil de página (según la sección del propio documento resultante,
+    # no un número fijo -- así la prueba no depende de un tamaño de página
+    # particular). Ambas imágenes (la chica agrandada y la ancha achicada)
+    # tienen que terminar ocupando ese ancho máximo, con un margen chico de
+    # tolerancia por redondeo de puntos a EMU.
+    seccion = doc_resultado.sections[0]
+    ancho_disponible_emu = seccion.page_width - seccion.left_margin - seccion.right_margin
+    tolerancia_emu = 20000  # ~0.02 pulgadas
+    assert len(doc_resultado.inline_shapes) == 2, (
+        f"Se esperaban 2 inline shapes, hay {len(doc_resultado.inline_shapes)}"
     )
-    print("Peso acorde a un EMF (liviano) -- OK")
+    for forma, etiqueta in zip(doc_resultado.inline_shapes, ("chica", "ancha")):
+        print(f"Imagen {etiqueta}: ancho = {forma.width} EMU (disponible = {ancho_disponible_emu} EMU)")
+        assert abs(forma.width - ancho_disponible_emu) <= tolerancia_emu, (
+            f"FALLO: la imagen {etiqueta} no ocupa el ancho máximo de la página "
+            f"(ancho={forma.width}, disponible={ancho_disponible_emu}) -- si es la imagen "
+            f"'chica', es el bug real del 2026-09-25: una imagen más chica que la página se "
+            f"dejaba en su tamaño nativo en vez de agrandarla al máximo."
+        )
+    print("Ambas imágenes (chica agrandada y ancha achicada) ocupan el ancho máximo de la página -- OK")
 
     # --- max_paginas en la misma sesión (fusión con el pegado de imágenes) ---
     docx_bytes_3paginas = _armar_docx_bytes(cantidad_paginas=3)

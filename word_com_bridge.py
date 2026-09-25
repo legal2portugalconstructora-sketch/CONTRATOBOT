@@ -395,26 +395,42 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
                 descripcion=f"Word ConvertToInlineShape ({hoja_excel}!{rango})",
             )
 
-            # La imagen se inserta a su tamaño NATIVO, sin importar el ancho
-            # de la página. Para rangos anchos (ej. columnas B:N de "Ax.A",
-            # ~11 pulgadas) esto la deja más ancha que el área útil de la
-            # página (márgen a márgen) -- se sale del márgen derecho y queda
-            # "cortada" visualmente en vez de reducida para que quepa. Se
-            # reescala manteniendo la proporción (LockAspectRatio) SOLO si
-            # hace falta, para no agrandar imágenes que ya entran bien (y
-            # como es vectorial, reescalarla no le pierde nitidez).
+            # La imagen se inserta a su tamaño NATIVO (el tamaño físico real
+            # del rango en Excel) -- al ser vectorial, ese tamaño nativo
+            # suele ser bastante más CHICO que el área útil de la página
+            # (a diferencia del método anterior, que exportaba un PNG
+            # inflado por el zoom de captura y por eso casi siempre había
+            # que achicarlo). Por eso ya no alcanza con achicar SOLO
+            # cuando sobra: la reescalamos siempre al tamaño MÁXIMO que
+            # entre en la página (ancho y alto disponibles, lo que sea
+            # más restrictivo), manteniendo la proporción -- tanto para
+            # agrandar como para achicar. Como es vectorial, agrandarla no
+            # le pierde nitidez.
             ancho_disponible = _com_retry(
                 lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
-                descripcion=f"Word PageSetup (para {hoja_excel}!{rango})",
+                descripcion=f"Word PageSetup ancho (para {hoja_excel}!{rango})",
             )
-            if imagen_insertada.Width > ancho_disponible:
+            alto_disponible = _com_retry(
+                lambda: doc.PageSetup.PageHeight - doc.PageSetup.TopMargin - doc.PageSetup.BottomMargin,
+                descripcion=f"Word PageSetup alto (para {hoja_excel}!{rango})",
+            )
+            _com_retry(
+                lambda: setattr(imagen_insertada, "LockAspectRatio", MSO_TRUE),
+                descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
+            )
+            _com_retry(
+                lambda: setattr(imagen_insertada, "Width", ancho_disponible),
+                descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
+            )
+            # Si al llenar el ancho la imagen se pasa del alto disponible
+            # (rangos más altos que anchos, ej. "Ax.A"), se vuelve a ajustar
+            # por el alto en cambio -- LockAspectRatio hace que el ancho se
+            # achique en proporción solo.
+            altura_actual = _com_retry(lambda: imagen_insertada.Height)
+            if altura_actual > alto_disponible:
                 _com_retry(
-                    lambda: setattr(imagen_insertada, "LockAspectRatio", MSO_TRUE),
-                    descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
-                )
-                _com_retry(
-                    lambda: setattr(imagen_insertada, "Width", ancho_disponible),
-                    descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
+                    lambda: setattr(imagen_insertada, "Height", alto_disponible),
+                    descripcion=f"Word ajustar alto de imagen (para {hoja_excel}!{rango})",
                 )
 
             figuras_despues = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
