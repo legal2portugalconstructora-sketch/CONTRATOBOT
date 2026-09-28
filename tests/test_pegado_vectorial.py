@@ -11,11 +11,22 @@ que la pantalla esté realmente renderizada (a diferencia del método
 anterior, que fallaba con capturas en blanco si la sesión estaba
 bloqueada o una sesión de Escritorio Remoto se desconectaba).
 
+Desde el 2026-09-27 existe además un método de RESPALDO (captura de
+pantalla rasterizada a PNG, igual al método viejo) para máquinas donde
+Selection.PasteSpecial() de Word nunca inserta nada aunque el
+portapapeles tenga el formato EMF disponible (confirmado en la práctica:
+Chart.Paste() dentro de Excel sí funciona siempre en esa máquina, pero
+cruzar a Word por el portapapeles nunca funciona ahí) -- ver la nota junto
+a XL_SCREEN en word_com_bridge.py. Esta prueba por eso acepta CUALQUIERA
+de los dos formatos (vectorial o PNG de respaldo): lo que importa es que
+el pegado nunca falle del todo, no cuál mecanismo puntual usó esta
+máquina.
+
 Esta prueba verifica, con Excel/Word reales:
   - Que el pegado no lanza error y deja exactamente una imagen nueva.
-  - Que la imagen resultante es vectorial (content_type "image/x-emf"),
-    no un PNG rasterizado -- si esto falla, es señal de que alguien
-    volvió a un método basado en captura de pantalla sin darse cuenta.
+  - Que la imagen resultante es vectorial (content_type "image/x-emf") O,
+    si esta máquina cayó al método de respaldo, un PNG -- cualquier otro
+    tipo sería una señal real de que algo se rompió.
   - Que un rango CHICO (más chico que la página) se agranda para ocupar
     el máximo posible -- bug real encontrado el 2026-09-25: al pasar al
     pegado vectorial, una imagen nativamente más chica que la página se
@@ -95,13 +106,22 @@ if __name__ == "__main__":
     assert len(imagenes_rels) == 2, f"Se esperaban 2 imágenes, hay {len(imagenes_rels)}"
     print("Se pegaron exactamente 2 imágenes -- OK")
 
+    content_types = []
     for rel in imagenes_rels:
         content_type = rel.target_part.content_type
-        assert content_type == "image/x-emf", (
-            f"FALLO: una imagen pegada es '{content_type}', no vectorial (image/x-emf) -- "
-            f"parece que se volvió a un método de captura de pantalla rasterizada."
+        assert content_type in ("image/x-emf", "image/png"), (
+            f"FALLO: una imagen pegada es '{content_type}', ni vectorial (image/x-emf) ni el "
+            f"PNG de respaldo -- esto sí es un tipo de archivo inesperado."
         )
-    print("Las 2 imágenes son vectoriales (image/x-emf), no PNG rasterizados -- OK")
+        content_types.append(content_type)
+    if all(ct == "image/x-emf" for ct in content_types):
+        print("Las 2 imágenes son vectoriales (image/x-emf) -- OK (método normal)")
+    else:
+        print(
+            f"Tipos de imagen: {content_types} -- esta máquina usó el método de respaldo (PNG) "
+            f"para al menos una imagen. No es un fallo: solo pasa cuando Word no acepta "
+            f"PasteSpecial() en esta máquina en particular."
+        )
 
     # Ancho útil de página (según la sección del propio documento resultante,
     # no un número fijo -- así la prueba no depende de un tamaño de página
@@ -114,25 +134,70 @@ if __name__ == "__main__":
     assert len(doc_resultado.inline_shapes) == 2, (
         f"Se esperaban 2 inline shapes, hay {len(doc_resultado.inline_shapes)}"
     )
-    for forma, etiqueta in zip(doc_resultado.inline_shapes, ("chica", "ancha")):
+    for forma, etiqueta, content_type in zip(doc_resultado.inline_shapes, ("chica", "ancha"), content_types):
         print(f"Imagen {etiqueta}: ancho = {forma.width} EMU (disponible = {ancho_disponible_emu} EMU)")
-        assert abs(forma.width - ancho_disponible_emu) <= tolerancia_emu, (
-            f"FALLO: la imagen {etiqueta} no ocupa el ancho máximo de la página "
-            f"(ancho={forma.width}, disponible={ancho_disponible_emu}) -- si es la imagen "
-            f"'chica', es el bug real del 2026-09-25: una imagen más chica que la página se "
-            f"dejaba en su tamaño nativo en vez de agrandarla al máximo."
-        )
-    print("Ambas imágenes (chica agrandada y ancha achicada) ocupan el ancho máximo de la página -- OK")
+        if content_type == "image/x-emf":
+            # El método vectorial SIEMPRE reescala al máximo (agranda o
+            # achica) -- ver el bug real del 2026-09-25 más arriba.
+            assert abs(forma.width - ancho_disponible_emu) <= tolerancia_emu, (
+                f"FALLO: la imagen {etiqueta} (vectorial) no ocupa el ancho máximo de la página "
+                f"(ancho={forma.width}, disponible={ancho_disponible_emu})."
+            )
+        else:
+            # El método de respaldo (PNG) solo achica si hace falta, igual
+            # que el método viejo -- no fuerza a agrandar una imagen chica,
+            # así que acá solo importa que NUNCA se pase del ancho de la
+            # página, no que la ocupe entera.
+            assert forma.width <= ancho_disponible_emu + tolerancia_emu, (
+                f"FALLO: la imagen {etiqueta} (respaldo/PNG) se pasa del ancho disponible "
+                f"(ancho={forma.width}, disponible={ancho_disponible_emu})."
+            )
+    print("Los anchos de las imágenes son correctos para el método que usó cada una -- OK")
 
     # --- max_paginas en la misma sesión (fusión con el pegado de imágenes) ---
+    # OJO: las imágenes de esta prueba están armadas a propósito para
+    # ocupar el máximo posible de la página (para poder probar el
+    # reescalado) -- eso hace que el documento real termine con MÁS
+    # páginas de las que tenía el .docx original (el CONTRATO real no
+    # tiene este problema: cada imagen va a una página ya diseñada para
+    # esa imagen puntual, con espacio de sobra). Por eso acá se verifica
+    # la paginación REAL con Word (no se asume en qué página de texto
+    # quedó cada cosa), igual que en tests/test_recorte_paginas.py.
     docx_bytes_3paginas = _armar_docx_bytes(cantidad_paginas=3)
+    max_paginas_prueba = 3
     resultado_recortado = agregar_imagenes_a_contrato(
-        excel_bytes, docx_bytes_3paginas, especificaciones, max_paginas=2,
+        excel_bytes, docx_bytes_3paginas, especificaciones, max_paginas=max_paginas_prueba,
     )
-    doc_recortado = Document(io.BytesIO(resultado_recortado))
-    texto = "\n".join(p.text for p in doc_recortado.paragraphs)
-    assert "PAGINA 1" in texto and "PAGINA 2" in texto, "Faltó contenido que no debería haberse borrado"
-    assert "PAGINA 3" not in texto, "La página 3 debería haberse recortado (max_paginas=2)"
+
+    import tempfile
+    import pythoncom
+    import win32com.client as win32
+    from word_com_bridge import _com_retry, _cerrar_sin_fallar, _cerrar_automatizaciones_huerfanas
+
+    tmp_recortado = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+    tmp_recortado.write(resultado_recortado)
+    tmp_recortado.close()
+    pythoncom.CoInitialize()
+    _cerrar_automatizaciones_huerfanas()
+    word_verif = win32.Dispatch("Word.Application")
+    # Reintentar (no una asignación directa): recién cerrada la sesión de
+    # Word anterior de esta misma prueba, una nueva puede tardar un
+    # instante en aceptar llamadas COM -- ver la nota junto a esto mismo
+    # en word_com_bridge.pegar_rangos_excel_como_imagen_en_word.
+    _com_retry(lambda: setattr(word_verif, "Visible", False), reintentar_cualquier_error=True)
+    _com_retry(lambda: setattr(word_verif, "DisplayAlerts", 0), reintentar_cualquier_error=True)
+    doc_verif = word_verif.Documents.Open(os.path.abspath(tmp_recortado.name))
+    doc_verif.ActiveWindow.View.Type = 3
+    paginas_reales = doc_verif.ComputeStatistics(2)
+    _cerrar_sin_fallar(lambda: doc_verif.Close(SaveChanges=False))
+    _cerrar_sin_fallar(lambda: word_verif.Quit())
+    pythoncom.CoUninitialize()
+    os.remove(tmp_recortado.name)
+
+    print(f"Páginas reales tras recortar a max_paginas={max_paginas_prueba}: {paginas_reales}")
+    assert paginas_reales == max_paginas_prueba, (
+        f"FALLO: se pidió recortar a {max_paginas_prueba} páginas, quedaron {paginas_reales}."
+    )
     print("max_paginas sigue funcionando en la misma sesión de pegado -- OK")
 
     print("\nTODO OK")

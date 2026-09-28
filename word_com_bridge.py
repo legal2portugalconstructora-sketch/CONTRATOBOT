@@ -38,6 +38,20 @@ HOJA_AXE_IMAGEN = "Ax.E"
 RANGO_AXE_IMAGEN = "B2:K73"
 PAGINA_AXE_IMAGEN = 15
 
+# Constantes del método de RESPALDO (captura de pantalla rasterizada a
+# PNG) -- ver _pegar_rango_como_imagen_raster. Se usa SOLO si el pegado
+# vectorial (el método normal, ver WD_PASTE_ENHANCED_METAFILE más abajo)
+# no logra dejar la imagen en el documento tras reintentar -- en algunas
+# máquinas, por el motivo que sea (política de seguridad, configuración
+# de Word, etc.), Selection.PasteSpecial() nunca inserta nada aunque el
+# portapapeles tenga el formato EMF disponible, mientras que Chart.Paste()
+# (que pega DENTRO de Excel, no cruza a Word por el portapapeles) sí
+# funciona siempre -- confirmado en la práctica en una máquina real donde
+# el pegado vectorial fallaba 100% de las veces.
+XL_SCREEN = 1                    # XlPictureAppearance.xlScreen
+XL_BITMAP = 2                    # XlCopyPictureFormat.xlBitmap
+ZOOM_CAPTURA_IMAGEN_RESPALDO = 400
+
 # XlCorruptLoad.xlRepairFile -- le pide a Excel que intente reparar el
 # archivo si hace falta al abrirlo, en vez de fallar directo. Hace falta
 # para algunos Excel reales (ej. con hojas/vínculos externos más
@@ -60,6 +74,19 @@ WD_COLLAPSE_START = 1            # WdCollapseDirection.wdCollapseStart
 WD_STATISTIC_PAGES = 2           # WdStatistic.wdStatisticPages
 WD_PRINT_VIEW = 3                # WdViewType.wdPrintView
 WD_PASTE_ENHANCED_METAFILE = 9   # WdPasteDataType.wdPasteEnhancedMetafile
+WD_STORY = 6                     # WdUnits.wdStory
+
+# Cuántas veces reintentar la secuencia COMPLETA de pegar-y-convertir UN
+# rango (Copy -> PasteSpecial -> verificar -> ConvertToInlineShape ->
+# verificar) si el portapapeles no llega a tiempo o Word no termina de
+# procesar el pegado/la conversión -- visto en la práctica en máquinas
+# reales: a veces PasteSpecial "funciona" (no lanza error) pero no deja
+# ninguna figura nueva, o ConvertToInlineShape "funciona" pero la figura
+# no queda contada como imagen del documento. _com_retry ya reintenta
+# LLAMADAS puntuales que fallan con una excepción, pero estos dos casos
+# NO lanzan excepción -- fallan en la verificación posterior -- así que
+# hace falta reintentar la secuencia entera, no una llamada suelta.
+MAX_REINTENTOS_PEGADO_IMAGEN = 3
 
 # El CONTRATO está diseñado para ocupar exactamente 15 páginas (la última
 # imagen pegada, la de "Ax.E", va en la página 15 -- ver PAGINA_AXE_IMAGEN
@@ -239,9 +266,280 @@ def _recortar_documento_word_abierto(word, doc, max_paginas):
         lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
         descripcion="Word Collapse (recorte de páginas sobrantes)",
     )
-    rango_sobrante = doc.Range(Start=seleccion.Start, End=doc.Content.End)
-    _com_retry(lambda: rango_sobrante.Delete(), descripcion="Word borrar páginas sobrantes")
+    # Se borra extendiendo la SELECCIÓN misma hasta el final del documento
+    # (Selection.MoveEnd + Selection.Delete), no armando un Range aparte
+    # con doc.Range(Start=..., End=doc.Content.End) -- ese Range separado
+    # puede caer justo en el límite de anclaje de una imagen recién
+    # pegada (ej. si la última imagen de la página max_paginas quedó muy
+    # cerca del final), y Word lo rechaza con "No se puede modificar el
+    # rango" (visto en la práctica). Selection.Delete() no tiene ese
+    # problema porque es la misma selección con la que Word ya venía
+    # trabajando, no un Range construido aparte.
+    _com_retry(
+        lambda: seleccion.MoveEnd(Unit=WD_STORY, Count=1),
+        descripcion="Word MoveEnd hasta el final (recorte de páginas sobrantes)",
+    )
+    _com_retry(lambda: seleccion.Delete(), descripcion="Word borrar páginas sobrantes")
     return True
+
+
+def _pegar_un_rango_como_imagen_vectorial(excel, word, doc, hoja_excel, rango, rango_obj, numero_pagina, mso_true):
+    """UN intento de pegar 'rango_obj' (ya activo en Excel) como imagen
+    vectorial EMF en la página 'numero_pagina' de 'doc', y reescalarla al
+    máximo tamaño que entre en la página. Lanza RuntimeError si el pegado
+    o la conversión a imagen en línea no dejan ninguna figura nueva --
+    esto NO es un error de COM (ninguna llamada lanza excepción), así que
+    _com_retry no lo cubre; el llamador (pegar_rangos_excel_como_imagen_en_word)
+    es quien reintenta esta función completa unas pocas veces si hace falta.
+    Devuelve la imagen ya insertada y reescalada."""
+    figuras_antes = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+
+    seleccion = word.Selection
+    # Ir al inicio de la página indicada, usando la paginación real de
+    # Word (igual que Ctrl+G -> Página -> 10 -> Ir a).
+    _com_retry(
+        lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=numero_pagina),
+        descripcion=f"Word GoTo página {numero_pagina} (para {hoja_excel}!{rango})",
+    )
+    _com_retry(
+        lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
+        descripcion=f"Word Collapse (para {hoja_excel}!{rango})",
+    )
+    # Se re-copia el rango EN CADA intento (no solo antes del bucle de
+    # reintentos): si el portapapeles quedó en un estado raro de un
+    # intento anterior, un Copy() nuevo lo repuebla de cero.
+    _com_retry(lambda: excel.Goto(rango_obj, True), descripcion=f"Excel Goto ({hoja_excel}!{rango})")
+    _com_retry(lambda: rango_obj.Copy(), descripcion=f"Excel Copy ({hoja_excel}!{rango})")
+    # reintentar_cualquier_error=True: el portapapeles puede tardar un
+    # instante en terminar de poblarse para rangos grandes -- pegar justo
+    # después a veces falla la primera vez.
+    _com_retry(
+        lambda: seleccion.PasteSpecial(DataType=WD_PASTE_ENHANCED_METAFILE),
+        descripcion=f"Word PasteSpecial EMF ({hoja_excel}!{rango} → página {numero_pagina})",
+        reintentar_cualquier_error=True,
+    )
+
+    cantidad_shapes = _com_retry(lambda: doc.Shapes.Count)
+    if cantidad_shapes == 0:
+        raise RuntimeError(
+            f"El pegado de '{hoja_excel}!{rango}' no insertó ninguna imagen nueva en el documento."
+        )
+    forma_flotante = _com_retry(lambda: doc.Shapes(cantidad_shapes))
+    # ConvertToInlineShape ancla la figura recién pegada en la posición
+    # del cursor (igual que hacía AddPicture antes), en vez de dejarla
+    # flotando con posición absoluta en la página.
+    imagen_insertada = _com_retry(
+        lambda: forma_flotante.ConvertToInlineShape(),
+        descripcion=f"Word ConvertToInlineShape ({hoja_excel}!{rango})",
+    )
+
+    # La imagen se inserta a su tamaño NATIVO (el tamaño físico real del
+    # rango en Excel) -- al ser vectorial, ese tamaño nativo suele ser
+    # bastante más CHICO que el área útil de la página (a diferencia del
+    # método anterior, que exportaba un PNG inflado por el zoom de
+    # captura y por eso casi siempre había que achicarlo). Por eso ya no
+    # alcanza con achicar SOLO cuando sobra: la reescalamos siempre al
+    # tamaño MÁXIMO que entre en la página (ancho y alto disponibles, lo
+    # que sea más restrictivo), manteniendo la proporción -- tanto para
+    # agrandar como para achicar. Como es vectorial, agrandarla no le
+    # pierde nitidez.
+    ancho_disponible = _com_retry(
+        lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
+        descripcion=f"Word PageSetup ancho (para {hoja_excel}!{rango})",
+    )
+    alto_disponible = _com_retry(
+        lambda: doc.PageSetup.PageHeight - doc.PageSetup.TopMargin - doc.PageSetup.BottomMargin,
+        descripcion=f"Word PageSetup alto (para {hoja_excel}!{rango})",
+    )
+    _com_retry(
+        lambda: setattr(imagen_insertada, "LockAspectRatio", mso_true),
+        descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
+    )
+    _com_retry(
+        lambda: setattr(imagen_insertada, "Width", ancho_disponible),
+        descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
+    )
+    # Si al llenar el ancho la imagen se pasa del alto disponible (rangos
+    # más altos que anchos, ej. "Ax.A"), se vuelve a ajustar por el alto
+    # en cambio -- LockAspectRatio hace que el ancho se achique en
+    # proporción solo.
+    altura_actual = _com_retry(lambda: imagen_insertada.Height)
+    if altura_actual > alto_disponible:
+        _com_retry(
+            lambda: setattr(imagen_insertada, "Height", alto_disponible),
+            descripcion=f"Word ajustar alto de imagen (para {hoja_excel}!{rango})",
+        )
+
+    figuras_despues = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+    if figuras_despues <= figuras_antes:
+        raise RuntimeError(
+            f"El pegado de '{hoja_excel}!{rango}' no dejó ninguna imagen nueva en el "
+            f"documento después de convertirla."
+        )
+    return imagen_insertada
+
+
+def _pegar_rango_como_imagen_raster(excel, word, doc, hoja, hoja_excel, rango, rango_obj, numero_pagina, mso_true):
+    """Método de RESPALDO -- ver la nota junto a XL_SCREEN más arriba.
+    Captura 'rango_obj' como imagen RASTERIZADA (CopyPicture -> pegarla en
+    un Chart temporal de Excel -> Chart.Export a PNG) y la inserta en Word
+    leyendo ese archivo del disco (InlineShapes.AddPicture), sin pasar
+    NUNCA por el portapapeles de WORD -- solo por el de Excel
+    (Chart.Paste, que pega DENTRO de la misma app). Se usa solo cuando el
+    pegado vectorial (el método normal) no logra insertar la imagen tras
+    reintentar, en máquinas donde Selection.PasteSpecial() de Word nunca
+    funciona por el motivo que sea."""
+    _com_retry(
+        lambda: setattr(excel.ActiveWindow, "Zoom", ZOOM_CAPTURA_IMAGEN_RESPALDO),
+        descripcion=f"Excel Zoom respaldo (para {hoja_excel}!{rango})",
+    )
+    _com_retry(lambda: excel.Goto(rango_obj, True), descripcion=f"Excel Goto respaldo ({hoja_excel}!{rango})")
+    _com_retry(
+        lambda: rango_obj.CopyPicture(Appearance=XL_SCREEN, Format=XL_BITMAP),
+        descripcion=f"Excel CopyPicture respaldo ({hoja_excel}!{rango})",
+    )
+
+    chart_obj = hoja.ChartObjects().Add(
+        rango_obj.Left, rango_obj.Top + rango_obj.Height + 20, rango_obj.Width, rango_obj.Height,
+    )
+    chart = chart_obj.Chart
+    ruta_png = None
+    try:
+        _com_retry(
+            lambda: chart_obj.Activate(),
+            descripcion=f"ChartObject.Activate respaldo ({hoja_excel}!{rango})",
+        )
+        _com_retry(
+            lambda: chart.Paste(),
+            descripcion=f"Chart.Paste respaldo ({hoja_excel}!{rango})",
+            reintentar_cualquier_error=True,
+        )
+        excel.CutCopyMode = False
+
+        tmp_png = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_png.close()
+        ruta_png = os.path.abspath(tmp_png.name)
+        _com_retry(
+            lambda: chart.Export(Filename=ruta_png, FilterName="PNG"),
+            descripcion=f"Chart.Export respaldo ({hoja_excel}!{rango})",
+        )
+        if not os.path.exists(ruta_png) or os.path.getsize(ruta_png) == 0:
+            raise RuntimeError(
+                f"El método de respaldo tampoco pudo generar la imagen de '{hoja_excel}!{rango}': "
+                f"el PNG exportado desde Excel no existe o está vacío."
+            )
+
+        _com_retry(lambda: setattr(excel.ActiveWindow, "Zoom", 100), descripcion="Excel Zoom respaldo (restaurar)")
+
+        figuras_antes = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+        seleccion = word.Selection
+        _com_retry(
+            lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=numero_pagina),
+            descripcion=f"Word GoTo página respaldo {numero_pagina} ({hoja_excel}!{rango})",
+        )
+        _com_retry(
+            lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
+            descripcion=f"Word Collapse respaldo ({hoja_excel}!{rango})",
+        )
+        imagen_insertada = _com_retry(
+            lambda: seleccion.InlineShapes.AddPicture(FileName=ruta_png),
+            descripcion=f"Word AddPicture respaldo {hoja_excel}!{rango} → página {numero_pagina}",
+        )
+
+        ancho_disponible = _com_retry(
+            lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
+            descripcion=f"Word PageSetup ancho respaldo (para {hoja_excel}!{rango})",
+        )
+        alto_disponible = _com_retry(
+            lambda: doc.PageSetup.PageHeight - doc.PageSetup.TopMargin - doc.PageSetup.BottomMargin,
+            descripcion=f"Word PageSetup alto respaldo (para {hoja_excel}!{rango})",
+        )
+        # AddPicture inserta a tamaño NATIVO (según el DPI del PNG, inflado
+        # por el zoom de captura de arriba) -- achicar SOLO si hace falta,
+        # manteniendo la proporción, para no agrandar imágenes que ya entran.
+        if imagen_insertada.Width > ancho_disponible:
+            _com_retry(
+                lambda: setattr(imagen_insertada, "LockAspectRatio", mso_true),
+                descripcion=f"Word LockAspectRatio respaldo (para {hoja_excel}!{rango})",
+            )
+            _com_retry(
+                lambda: setattr(imagen_insertada, "Width", ancho_disponible),
+                descripcion=f"Word ajustar ancho respaldo (para {hoja_excel}!{rango})",
+            )
+        altura_actual = _com_retry(lambda: imagen_insertada.Height)
+        if altura_actual > alto_disponible:
+            _com_retry(
+                lambda: setattr(imagen_insertada, "LockAspectRatio", mso_true),
+                descripcion=f"Word LockAspectRatio respaldo alto (para {hoja_excel}!{rango})",
+            )
+            _com_retry(
+                lambda: setattr(imagen_insertada, "Height", alto_disponible),
+                descripcion=f"Word ajustar alto respaldo (para {hoja_excel}!{rango})",
+            )
+
+        figuras_despues = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
+        if figuras_despues <= figuras_antes:
+            raise RuntimeError(
+                f"El método de respaldo tampoco dejó ninguna imagen nueva en el documento para "
+                f"'{hoja_excel}!{rango}'."
+            )
+        return imagen_insertada
+    finally:
+        _cerrar_sin_fallar(lambda: chart_obj.Delete())
+        if ruta_png is not None:
+            try:
+                os.remove(ruta_png)
+            except OSError:
+                pass
+
+
+def _pegar_rango_con_reintentos(excel, word, doc, hoja, hoja_excel, rango, rango_obj, numero_pagina, mso_true):
+    """Llama a _pegar_un_rango_como_imagen_vectorial reintentando la
+    secuencia COMPLETA hasta MAX_REINTENTOS_PEGADO_IMAGEN veces si falla
+    en la verificación (no en una excepción de COM puntual, que ya
+    reintenta _com_retry -- ver la nota junto a esa función). Entre
+    intento e intento, borra cualquier figura "flotante" que haya quedado
+    a medio pegar del intento anterior, para no dejar duplicados sueltos
+    en el documento si un reintento posterior sí funciona.
+
+    Si TODOS los intentos vectoriales fallan, cae al método de respaldo
+    (_pegar_rango_como_imagen_raster, ver la nota junto a XL_SCREEN) antes
+    de rendirse del todo -- así, en una máquina donde Word nunca acepta un
+    PasteSpecial() por el motivo que sea, el CONTRATO igual se genera (con
+    esa imagen puntual en menor resolución) en vez de fallar por completo."""
+    ultimo_error = None
+    for intento in range(1, MAX_REINTENTOS_PEGADO_IMAGEN + 1):
+        try:
+            return _pegar_un_rango_como_imagen_vectorial(
+                excel, word, doc, hoja_excel, rango, rango_obj, numero_pagina, mso_true,
+            )
+        except RuntimeError as exc:
+            ultimo_error = exc
+            # Limpiar cualquier figura flotante que haya quedado a medio
+            # pegar (ej. se pegó pero no se pudo convertir) antes de
+            # reintentar, para no terminar con dos imágenes del mismo
+            # rango si el próximo intento sí funciona.
+            try:
+                cantidad_shapes_residual = _com_retry(lambda: doc.Shapes.Count)
+                if cantidad_shapes_residual > 0:
+                    _cerrar_sin_fallar(lambda: doc.Shapes(cantidad_shapes_residual).Delete())
+            except Exception:
+                pass
+            if intento < MAX_REINTENTOS_PEGADO_IMAGEN:
+                import time
+                time.sleep(0.5)
+
+    try:
+        return _pegar_rango_como_imagen_raster(
+            excel, word, doc, hoja, hoja_excel, rango, rango_obj, numero_pagina, mso_true,
+        )
+    except Exception as exc_respaldo:
+        raise RuntimeError(
+            f"{ultimo_error} Se reintentó {MAX_REINTENTOS_PEGADO_IMAGEN} veces sin éxito, y el método "
+            f"de respaldo tampoco funcionó ({exc_respaldo}). Puede que otra aplicación haya usado el "
+            f"portapapeles justo en ese momento; intentá de nuevo sin tocar el mouse/teclado mientras "
+            f"se procesa."
+        ) from ultimo_error
 
 
 def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_word, max_paginas=None):
@@ -406,17 +704,10 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
             except Exception as exc:
                 raise ValueError(f"El rango '{rango}' no es válido en la hoja '{hoja_excel}'.") from exc
 
-            # Range.Copy() necesita que su hoja esté ACTIVA en Excel en ese
-            # momento; si no lo está (ej. porque el rango anterior era de
-            # otra hoja, o la hoja activa al abrir el archivo era otra),
-            # falla con el error 1004 de Excel. Application.Goto con
-            # Scroll=True activa la hoja Y desplaza la vista para que el
-            # rango quede visible, que es la forma estándar de evitar eso.
-            _com_retry(lambda: excel.Goto(rango_obj, True), descripcion=f"Excel Goto ({hoja_excel}!{rango})")
-            _com_retry(lambda: rango_obj.Copy(), descripcion=f"Excel Copy ({hoja_excel}!{rango})")
-
             # Paginación real recalculada para ESTE rango (ver nota arriba
             # sobre por qué no alcanza con calcularla una sola vez al inicio).
+            # Se chequea ANTES de intentar pegar nada -- si el documento no
+            # llega a esta página, reintentar el pegado no lo va a arreglar.
             total_paginas = _com_retry(
                 lambda: doc.ComputeStatistics(WD_STATISTIC_PAGES),
                 descripcion=f"Word ComputeStatistics (antes de {hoja_excel}!{rango})",
@@ -429,88 +720,12 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
                     f"ya no llegue a esa página; dime a qué página debería ir en ese caso.)"
                 )
 
-            figuras_antes = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
-
-            seleccion = word.Selection
-            # Ir al inicio de la página indicada, usando la paginación real
-            # de Word (igual que Ctrl+G -> Página -> 10 -> Ir a).
-            _com_retry(
-                lambda: seleccion.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=numero_pagina),
-                descripcion=f"Word GoTo página {numero_pagina} (para {hoja_excel}!{rango})",
-            )
-            _com_retry(
-                lambda: seleccion.Collapse(Direction=WD_COLLAPSE_START),
-                descripcion=f"Word Collapse (para {hoja_excel}!{rango})",
-            )
-            # reintentar_cualquier_error=True: el portapapeles puede tardar
-            # un instante en terminar de poblarse para rangos grandes --
-            # pegar justo después a veces falla la primera vez.
-            _com_retry(
-                lambda: seleccion.PasteSpecial(DataType=WD_PASTE_ENHANCED_METAFILE),
-                descripcion=f"Word PasteSpecial EMF ({hoja_excel}!{rango} → página {numero_pagina})",
-                reintentar_cualquier_error=True,
-            )
-
-            cantidad_shapes = _com_retry(lambda: doc.Shapes.Count)
-            if cantidad_shapes == 0:
-                raise RuntimeError(
-                    f"El pegado de '{hoja_excel}!{rango}' no insertó ninguna imagen nueva en el "
-                    f"documento. Puede que otra aplicación haya usado el portapapeles justo en ese "
-                    f"momento; intenta de nuevo sin tocar el mouse/teclado mientras se procesa."
-                )
-            forma_flotante = _com_retry(lambda: doc.Shapes(cantidad_shapes))
-            # ConvertToInlineShape ancla la figura recién pegada en la
-            # posición del cursor (igual que hacía AddPicture antes), en vez
-            # de dejarla flotando con posición absoluta en la página.
-            imagen_insertada = _com_retry(
-                lambda: forma_flotante.ConvertToInlineShape(),
-                descripcion=f"Word ConvertToInlineShape ({hoja_excel}!{rango})",
-            )
-
-            # La imagen se inserta a su tamaño NATIVO (el tamaño físico real
-            # del rango en Excel) -- al ser vectorial, ese tamaño nativo
-            # suele ser bastante más CHICO que el área útil de la página
-            # (a diferencia del método anterior, que exportaba un PNG
-            # inflado por el zoom de captura y por eso casi siempre había
-            # que achicarlo). Por eso ya no alcanza con achicar SOLO
-            # cuando sobra: la reescalamos siempre al tamaño MÁXIMO que
-            # entre en la página (ancho y alto disponibles, lo que sea
-            # más restrictivo), manteniendo la proporción -- tanto para
-            # agrandar como para achicar. Como es vectorial, agrandarla no
-            # le pierde nitidez.
-            ancho_disponible = _com_retry(
-                lambda: doc.PageSetup.PageWidth - doc.PageSetup.LeftMargin - doc.PageSetup.RightMargin,
-                descripcion=f"Word PageSetup ancho (para {hoja_excel}!{rango})",
-            )
-            alto_disponible = _com_retry(
-                lambda: doc.PageSetup.PageHeight - doc.PageSetup.TopMargin - doc.PageSetup.BottomMargin,
-                descripcion=f"Word PageSetup alto (para {hoja_excel}!{rango})",
-            )
-            _com_retry(
-                lambda: setattr(imagen_insertada, "LockAspectRatio", MSO_TRUE),
-                descripcion=f"Word LockAspectRatio (para {hoja_excel}!{rango})",
-            )
-            _com_retry(
-                lambda: setattr(imagen_insertada, "Width", ancho_disponible),
-                descripcion=f"Word ajustar ancho de imagen (para {hoja_excel}!{rango})",
-            )
-            # Si al llenar el ancho la imagen se pasa del alto disponible
-            # (rangos más altos que anchos, ej. "Ax.A"), se vuelve a ajustar
-            # por el alto en cambio -- LockAspectRatio hace que el ancho se
-            # achique en proporción solo.
-            altura_actual = _com_retry(lambda: imagen_insertada.Height)
-            if altura_actual > alto_disponible:
-                _com_retry(
-                    lambda: setattr(imagen_insertada, "Height", alto_disponible),
-                    descripcion=f"Word ajustar alto de imagen (para {hoja_excel}!{rango})",
-                )
-
-            figuras_despues = _com_retry(lambda: doc.InlineShapes.Count + doc.Shapes.Count)
-            if figuras_despues <= figuras_antes:
-                raise RuntimeError(
-                    f"El pegado de '{hoja_excel}!{rango}' no dejó ninguna imagen nueva en el "
-                    f"documento después de convertirla. Volvé a intentar procesando el contrato."
-                )
+            # El pegado en sí (Copy -> PasteSpecial -> convertir -> ajustar
+            # tamaño) vive en _pegar_un_rango_como_imagen_vectorial, y
+            # _pegar_rango_con_reintentos reintenta esa secuencia COMPLETA
+            # unas pocas veces si el portapapeles/Word no la dejan bien
+            # pegada -- ver la nota junto a MAX_REINTENTOS_PEGADO_IMAGEN.
+            _pegar_rango_con_reintentos(excel, word, doc, hoja, hoja_excel, rango, rango_obj, numero_pagina, MSO_TRUE)
 
         if max_paginas is not None:
             _recortar_documento_word_abierto(word, doc, max_paginas)
