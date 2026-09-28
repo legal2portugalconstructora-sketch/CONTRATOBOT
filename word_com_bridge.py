@@ -305,8 +305,15 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
         # arriba) en vez de win32com.client.constants.*, no perdemos nada
         # usando enlace tardío.
         excel = win32.Dispatch("Excel.Application")
-        excel.Visible = True
-        excel.DisplayAlerts = False
+        # Recién abierto, Excel a veces tarda una fracción de segundo en
+        # quedar listo para aceptar llamadas COM -- asignarle una propiedad
+        # en ese instante puede fallar con un AttributeError rarísimo
+        # ("Property 'Excel.Application.Visible' can not be set", visto en
+        # la práctica), no el pywintypes.com_error habitual. reintentar
+        # cualquier error acá (no solo RPC_E_CALL_REJECTED) resuelve ese
+        # caso transitorio en vez de abortar todo el procesamiento.
+        _com_retry(lambda: setattr(excel, "Visible", True), reintentar_cualquier_error=True, descripcion="Excel Visible=True")
+        _com_retry(lambda: setattr(excel, "DisplayAlerts", False), reintentar_cualquier_error=True, descripcion="Excel DisplayAlerts=False")
         # UpdateLinks=0: el MODELO tiene un vínculo externo roto (referencia a
         # un Excel de la PC original donde se armó la plantilla, que ya no
         # existe en esta máquina). DisplayAlerts=False NO siempre alcanza para
@@ -317,8 +324,10 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
         wb = _com_retry(lambda: excel.Workbooks.Open(ruta_excel, UpdateLinks=0, CorruptLoad=XL_REPAIR_FILE))
 
         word = win32.Dispatch("Word.Application")
-        word.Visible = True
-        word.DisplayAlerts = 0  # wdAlertsNone: evita diálogos de Word que bloquearían las llamadas COM
+        # Mismo motivo que con Excel más arriba: recién abierto, puede
+        # tardar un instante en aceptar llamadas COM.
+        _com_retry(lambda: setattr(word, "Visible", True), reintentar_cualquier_error=True, descripcion="Word Visible=True")
+        _com_retry(lambda: setattr(word, "DisplayAlerts", 0), reintentar_cualquier_error=True, descripcion="Word DisplayAlerts=0")  # wdAlertsNone: evita diálogos de Word que bloquearían las llamadas COM
         doc = _com_retry(lambda: word.Documents.Open(ruta_word))
         # Forzar el cálculo de la paginación REAL antes de navegar a una página.
         _com_retry(lambda: setattr(doc.ActiveWindow.View, "Type", WD_PRINT_VIEW))
@@ -545,8 +554,11 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
     doc = None
     try:
         word = win32.Dispatch("Word.Application")
-        word.Visible = True
-        word.DisplayAlerts = 0  # wdAlertsNone: evita diálogos de Word que bloquearían las llamadas COM
+        # Recién abierto, Word puede tardar un instante en aceptar llamadas
+        # COM (ver la nota junto a esto mismo en
+        # pegar_rangos_excel_como_imagen_en_word).
+        _com_retry(lambda: setattr(word, "Visible", True), reintentar_cualquier_error=True, descripcion="Word Visible=True")
+        _com_retry(lambda: setattr(word, "DisplayAlerts", 0), reintentar_cualquier_error=True, descripcion="Word DisplayAlerts=0")  # wdAlertsNone: evita diálogos de Word que bloquearían las llamadas COM
         doc = _com_retry(lambda: word.Documents.Open(ruta_word))
         # Forzar el cálculo de la paginación REAL (ver la nota junto a esto
         # mismo en pegar_rangos_excel_como_imagen_en_word: con la app
@@ -625,8 +637,15 @@ def recalcular_excel_con_com(excel_bytes):
         # solo abrir, recalcular y guardar, así que puede quedar invisible
         # (más rápido y sin abrir una ventana de Excel en pantalla).
         excel = win32.Dispatch("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
+        # Recién abierto, Excel puede tardar un instante en aceptar llamadas
+        # COM -- asignarle una propiedad justo en ese momento a veces falla
+        # con un AttributeError rarísimo ("Property 'Excel.Application.
+        # Visible' can not be set", visto en la práctica: el usuario reportó
+        # justo este error acá), no el pywintypes.com_error habitual.
+        # reintentar cualquier error (no solo RPC_E_CALL_REJECTED) resuelve
+        # ese caso transitorio en vez de abortar todo el recálculo.
+        _com_retry(lambda: setattr(excel, "Visible", False), reintentar_cualquier_error=True, descripcion="Excel Visible=False")
+        _com_retry(lambda: setattr(excel, "DisplayAlerts", False), reintentar_cualquier_error=True, descripcion="Excel DisplayAlerts=False")
         # UpdateLinks=0: ver la nota junto a esta misma llamada en
         # pegar_rangos_excel_como_imagen_en_word -- evita que Open() se quede
         # esperando indefinidamente el diálogo "¿Actualizar vínculos?" por el
@@ -701,8 +720,11 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
         # solo se abre, se exporta a PDF y se cierra, sin que nadie necesite
         # ver la ventana de Word en pantalla.
         word = win32.Dispatch("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0  # wdAlertsNone
+        # Recién abierto, Word puede tardar un instante en aceptar llamadas
+        # COM (ver la nota junto a esto mismo en
+        # pegar_rangos_excel_como_imagen_en_word).
+        _com_retry(lambda: setattr(word, "Visible", False), reintentar_cualquier_error=True, descripcion="Word Visible=False")
+        _com_retry(lambda: setattr(word, "DisplayAlerts", 0), reintentar_cualquier_error=True, descripcion="Word DisplayAlerts=0")  # wdAlertsNone
         doc = _com_retry(lambda: word.Documents.Open(ruta_docx), descripcion="Word Documents.Open (a PDF)")
         # ExportAsFixedFormat (no el simple doc.SaveAs) a propósito: SaveAs
         # usa el perfil de calidad "para pantalla" por defecto de Word, que
