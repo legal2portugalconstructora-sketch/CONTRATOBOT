@@ -563,6 +563,7 @@ elif paso_actual == 3:
             # guardar un CONTRATO ya procesado correctamente).
             contrato_resultado_bytes = None
             contrato_info = None
+            contrato_error = None
             funcion_paso_contrato = FUNCIONES_PASO_CONTRATO.get(opcion_propiedad)
             if funcion_paso_contrato is not None:
                 try:
@@ -612,16 +613,19 @@ elif paso_actual == 3:
                         contrato_resultado_bytes = recortar_contrato_a_maximo_paginas(contrato_resultado_bytes)
                 except Exception as e:
                     contrato_resultado_bytes = None
+                    contrato_error = str(e)
                     st.error(f"❌ Ocurrió un error al procesar el CONTRATO: {e}")
             else:
-                st.warning(
+                contrato_error = (
                     f"Todavía no tengo las instrucciones para '{opcion_propiedad}'. "
                     f"Por ahora solo puedo procesar: {', '.join(FUNCIONES_PASO_CONTRATO.keys())}."
                 )
+                st.warning(contrato_error)
 
             # REGLAMENTO: aplica para los 4 Pasos/tipos de propiedad por igual.
             reglamento_resultado_bytes = None
             reglamento_info = None
+            reglamento_error = None
             if doc_reglamento_upload is not None:
                 try:
                     reglamento_resultado_bytes, reglamento_info = procesar_reglamento(
@@ -630,12 +634,14 @@ elif paso_actual == 3:
                     )
                 except Exception as e:
                     reglamento_resultado_bytes = None
+                    reglamento_error = str(e)
                     st.error(f"❌ Ocurrió un error al procesar el REGLAMENTO: {e}")
 
             # MEMBRESIA: mismos valores de placeholders que el CONTRATO,
             # aplica para los 4 Pasos/tipos de propiedad por igual.
             membresia_resultado_bytes = None
             membresia_info = None
+            membresia_error = None
             if doc_membresia_upload is not None:
                 try:
                     membresia_resultado_bytes, membresia_info = procesar_membresia(
@@ -644,12 +650,14 @@ elif paso_actual == 3:
                     )
                 except Exception as e:
                     membresia_resultado_bytes = None
+                    membresia_error = str(e)
                     st.error(f"❌ Ocurrió un error al procesar el MEMBRESIA: {e}")
 
             # DERECHOHABIENTES: mismos valores de placeholders que el
             # CONTRATO, aplica para los 4 Pasos/tipos de propiedad por igual.
             derechohabientes_resultado_bytes = None
             derechohabientes_info = None
+            derechohabientes_error = None
             if doc_derechohabientes_upload is not None:
                 try:
                     derechohabientes_resultado_bytes, derechohabientes_info = procesar_derechohabientes(
@@ -658,7 +666,21 @@ elif paso_actual == 3:
                     )
                 except Exception as e:
                     derechohabientes_resultado_bytes = None
+                    derechohabientes_error = str(e)
                     st.error(f"❌ Ocurrió un error al procesar el DERECHOHABIENTES: {e}")
+
+        # Los motivos de error se guardan SIEMPRE (haya o no resultado nuevo),
+        # para poder explicar en el Paso 4 por qué falta un documento -- el
+        # st.error(...) de arriba se muestra durante ESTE mismo procesamiento,
+        # pero _ir_a_paso(4) hace un st.rerun() inmediatamente después, que
+        # borra ese mensaje de la pantalla antes de que se alcance a leer (el
+        # Paso 4 no vuelve a mostrar nada del CONTRATO si no hay bytes, así
+        # que sin esto se ve "como si no se hubiera procesado", sin explicar
+        # el motivo).
+        st.session_state["contrato_error"] = contrato_error
+        st.session_state["reglamento_error"] = reglamento_error
+        st.session_state["membresia_error"] = membresia_error
+        st.session_state["derechohabientes_error"] = derechohabientes_error
 
         if contrato_resultado_bytes is not None:
             st.session_state["word_resultado_bytes"] = contrato_resultado_bytes
@@ -775,6 +797,8 @@ elif paso_actual == 4:
                     st.write(f"- {placeholder} → {valor}")
                 for hoja_img, rango_img, pagina_img in info.get("imagenes_pegadas", []):
                     st.write(f"**Imagen:** {hoja_img}!{rango_img} pegada en la página {pagina_img} ✅")
+    elif st.session_state.get("contrato_error"):
+        st.error(f"❌ El CONTRATO no se generó: {st.session_state['contrato_error']}")
 
     if st.session_state["reglamento_resultado_bytes"] is not None:
         info_reglamento = st.session_state["reglamento_info"]
@@ -795,6 +819,8 @@ elif paso_actual == 4:
                 st.write("**Valores usados para reemplazar los placeholders:**")
                 for placeholder, valor in info_reglamento["valores_usados"].items():
                     st.write(f"- {placeholder} → {valor}")
+    elif st.session_state.get("reglamento_error"):
+        st.error(f"❌ El REGLAMENTO no se generó: {st.session_state['reglamento_error']}")
 
     if st.session_state["membresia_resultado_bytes"] is not None:
         info_membresia = st.session_state["membresia_info"]
@@ -815,6 +841,8 @@ elif paso_actual == 4:
                 st.write("**Valores usados para reemplazar los placeholders:**")
                 for placeholder, valor in info_membresia["valores_usados"].items():
                     st.write(f"- {placeholder} → {valor}")
+    elif st.session_state.get("membresia_error"):
+        st.error(f"❌ El MEMBRESIA no se generó: {st.session_state['membresia_error']}")
 
     if st.session_state["derechohabientes_resultado_bytes"] is not None:
         info_derechohabientes = st.session_state["derechohabientes_info"]
@@ -834,12 +862,18 @@ elif paso_actual == 4:
                 st.write("**Valores usados para reemplazar los placeholders:**")
                 for placeholder, valor in info_derechohabientes["valores_usados"].items():
                     st.write(f"- {placeholder} → {valor}")
+    elif st.session_state.get("derechohabientes_error"):
+        st.error(f"❌ El DERECHOHABIENTES no se generó: {st.session_state['derechohabientes_error']}")
 
     if st.button("🔄 Nuevo procesamiento", type="primary"):
         st.session_state["word_resultado_bytes"] = None
         st.session_state["reglamento_resultado_bytes"] = None
         st.session_state["membresia_resultado_bytes"] = None
         st.session_state["derechohabientes_resultado_bytes"] = None
+        st.session_state["contrato_error"] = None
+        st.session_state["reglamento_error"] = None
+        st.session_state["membresia_error"] = None
+        st.session_state["derechohabientes_error"] = None
         _ir_a_paso(0)
 
 # Fondo de imagen por proyecto (si el proyecto ya elegido tiene un archivo
