@@ -73,6 +73,64 @@ def _en_windows():
     return os.name == "nt"
 
 
+def _cerrar_automatizaciones_huerfanas():
+    """Cierra EXCEL.EXE/WINWORD.EXE 'huérfanos' de un intento anterior de
+    automatización que quedó a medio camino -- ANTES de abrir uno nuevo.
+
+    Hace falta porque Excel/Word se registran como servidores COM
+    'multi-use': si ya hay un proceso corriendo (aunque sea un huérfano
+    trabado, ej. mostrando un diálogo bloqueado que nadie puede cerrar
+    porque la automatización es headless), Dispatch("Excel.Application")
+    se ENGANCHA a ESE MISMO proceso en vez de abrir uno nuevo -- heredando
+    lo que sea que lo tenga trabado. Se vio en la práctica: un huérfano
+    trabado hace que hasta 'excel.Visible = False' falle con un
+    AttributeError ("Property 'Excel.Application.Visible' can not be
+    set"), y reintentar (_com_retry) no ayuda porque sigue siendo el mismo
+    objeto roto -- hay que sacar el huérfano de en medio ANTES, no
+    reintentar después.
+
+    Identifica huérfanos por la bandera '/automation' en la línea de
+    comando -- Windows la agrega SOLO cuando el proceso se abrió vía COM,
+    nunca cuando alguien lo abre a mano (confirmado en la práctica varias
+    veces: un Excel/Word abierto por el usuario nunca la tiene) -- así que
+    nunca toca una ventana real que el usuario tenga abierta. Best-effort:
+    si algo de esto falla (ej. PowerShell no disponible), simplemente no
+    hace nada y se sigue con el Dispatch normal."""
+    import json
+    import subprocess
+
+    for nombre_proceso in ("EXCEL.EXE", "WINWORD.EXE"):
+        try:
+            resultado = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                    f"Get-CimInstance Win32_Process -Filter \"Name='{nombre_proceso}'\" "
+                    "| Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            salida = resultado.stdout.strip()
+            if not salida:
+                continue
+            procesos = json.loads(salida)
+            if isinstance(procesos, dict):
+                procesos = [procesos]
+            for proc in procesos:
+                command_line = (proc.get("CommandLine") or "").lower()
+                pid = proc.get("ProcessId")
+                if pid is None or "/automation" not in command_line:
+                    continue
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True, timeout=10,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
 _RPC_E_CALL_REJECTED = -2147418111  # 0x8001010A: "la llamada fue rechazada por el destinatario"
 
 
@@ -295,6 +353,11 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     wb = None
     doc = None
     try:
+        # Ver la nota junto a _cerrar_automatizaciones_huerfanas: si queda
+        # un Excel/Word huérfano trabado de un intento anterior, Dispatch
+        # se engancha a ESE MISMO proceso en vez de abrir uno nuevo.
+        _cerrar_automatizaciones_huerfanas()
+
         # Se usa Dispatch (enlace tardío) en vez de gencache.EnsureDispatch
         # a propósito: EnsureDispatch necesita generar y cachear un wrapper
         # "makepy" para Excel/Word en disco (gen_py), y si ese caché está
@@ -553,6 +616,7 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
     word = None
     doc = None
     try:
+        _cerrar_automatizaciones_huerfanas()
         word = win32.Dispatch("Word.Application")
         # Recién abierto, Word puede tardar un instante en aceptar llamadas
         # COM (ver la nota junto a esto mismo en
@@ -631,6 +695,8 @@ def recalcular_excel_con_com(excel_bytes):
         tmp_excel.write(excel_bytes)
         tmp_excel.close()
         ruta_excel = os.path.abspath(tmp_excel.name)
+
+        _cerrar_automatizaciones_huerfanas()
 
         # Sin Visible=True a propósito: a diferencia de pegar_rangos_excel_como_imagen_en_word,
         # aquí no hay portapapeles ni paginación de Word de por medio — es
@@ -715,6 +781,8 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
         tmp_docx.close()
         ruta_docx = os.path.abspath(tmp_docx.name)
         ruta_pdf = os.path.abspath(tmp_pdf.name)
+
+        _cerrar_automatizaciones_huerfanas()
 
         # Sin Visible=True a propósito (igual que recalcular_excel_con_com):
         # solo se abre, se exporta a PDF y se cierra, sin que nadie necesite
