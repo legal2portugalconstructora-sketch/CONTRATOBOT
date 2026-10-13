@@ -1,0 +1,43 @@
+rules:
+  - id: contratobot-word-saveas-pdf
+    languages: [python]
+    severity: ERROR
+    message: >
+      No uses doc.SaveAs(..., FileFormat=17) para exportar un Word a PDF --
+      usa doc.ExportAsFixedFormat(..., OptimizeFor=WD_EXPORT_OPTIMIZE_FOR_PRINT)
+      en su lugar. Bug real (2026-09-22): SaveAs aplica el perfil de calidad
+      "para pantalla" de Word por defecto, que recomprime las imágenes MUY
+      agresivamente (una imagen de 4398x7586px quedaba en apenas 500x863px
+      en el PDF, casi ilegible). Ver convertir_docx_a_pdf_con_com en
+      word_com_bridge.py y tests/test_pdf_calidad_imagen.py.
+    patterns:
+      - pattern: $DOC.SaveAs(..., FileFormat=17, ...)
+    metadata:
+      category: correctness
+      references:
+        - word_com_bridge.py (convertir_docx_a_pdf_con_com)
+        - tests/test_pdf_calidad_imagen.py
+
+  - id: contratobot-com-property-sin-reintento
+    languages: [python]
+    severity: WARNING
+    message: >
+      Asignar .Visible / .DisplayAlerts directo sobre una Application de
+      Excel/Word recién creada (excel = win32.Dispatch(...); excel.Visible
+      = ...) puede fallar con un AttributeError transitorio ("Property
+      ... can not be set") si la app todavía no terminó de iniciar, o si
+      Dispatch se enganchó a un proceso huérfano trabado. Envolvé la
+      asignación en _com_retry(lambda: setattr(...), reintentar_cualquier_error=True)
+      en su lugar. Bug real (2026-09-27), reportado por el usuario y
+      arreglado en word_com_bridge.py.
+    patterns:
+      - pattern-either:
+          - pattern: $APP.Visible = $VAL
+          - pattern: $APP.DisplayAlerts = $VAL
+      - metavariable-regex:
+          metavariable: $APP
+          regex: ^(excel|word)$
+    metadata:
+      category: correctness
+      references:
+        - word_com_bridge.py (_com_retry, _cerrar_automatizaciones_huerfanas)

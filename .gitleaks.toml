@@ -1,0 +1,13 @@
+title = "ContratoBot - configuración de gitleaks"
+
+# Reglas por defecto de gitleaks (API keys, tokens, claves privadas, etc.)
+[extend]
+useDefault = true
+
+# Verificado el 2026-10-13 con un escaneo completo del historial (21
+# commits, sin hallazgos): los datos de prueba de tests/ (DNIs falsos,
+# números de membresía tipo "GTAA-99999", etc.) no disparan ninguna regla
+# por defecto, así que no hace falta una lista de excepciones por ahora.
+# Si en el futuro algún dato de prueba nuevo da un falso positivo, se
+# agrega acá una entrada en [allowlist].regexes (no borrar la alerta sin
+# agregar antes la excepción, para no perder cobertura real).

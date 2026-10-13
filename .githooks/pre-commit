@@ -1,0 +1,83 @@
+#!/bin/sh
+# Pre-commit: escanea lo que se va a commitear en busca de secretos
+# (API keys, tokens, contraseñas, claves privadas) con gitleaks, ANTES de
+# que el commit se cree -- para no subir una credencial sin querer entre
+# las dos PCs que sincronizan este repo.
+#
+# No bloquea el commit si gitleaks no está instalado en esta máquina
+# (ej. la otra PC, que no siempre tiene las mismas herramientas de
+# desarrollo instaladas) -- solo avisa. El objetivo es dar una red de
+# seguridad extra, no trabar el flujo de trabajo normal.
+#
+# Instalación de gitleaks en Windows: winget install --id Gitleaks.Gitleaks
+
+encontrar_gitleaks() {
+    if command -v gitleaks >/dev/null 2>&1; then
+        echo "gitleaks"
+        return 0
+    fi
+    # winget instala por usuario; la carpeta exacta varía según la versión,
+    # así que se busca con un patrón en vez de una ruta fija.
+    ruta=$(find "$LOCALAPPDATA/Microsoft/WinGet/Packages" -maxdepth 2 -iname "gitleaks.exe" 2>/dev/null | head -n 1)
+    if [ -n "$ruta" ]; then
+        echo "$ruta"
+        return 0
+    fi
+    return 1
+}
+
+GITLEAKS_BIN=$(encontrar_gitleaks)
+if [ -z "$GITLEAKS_BIN" ]; then
+    echo "⚠️  gitleaks no está instalado en esta máquina -- se salta el escaneo de secretos."
+    echo "   Instalalo con: winget install --id Gitleaks.Gitleaks"
+    exit 0
+fi
+
+"$GITLEAKS_BIN" protect --staged --redact --config "$(git rev-parse --show-toplevel)/.gitleaks.toml"
+resultado=$?
+
+if [ $resultado -ne 0 ]; then
+    echo ""
+    echo "❌ gitleaks encontró algo que parece una credencial en los cambios a commitear."
+    echo "   Revisá el detalle arriba. Si es un falso positivo, agregá una excepción en .gitleaks.toml."
+    exit 1
+fi
+
+# --- Semgrep: reglas propias de este proyecto (ver .semgrep/contratobot-rules.yaml),
+# contra patrones que ya causaron bugs reales (ej. doc.SaveAs para PDF en
+# vez de ExportAsFixedFormat -- bajaba muchisimo la resolucion de las
+# imagenes). Mismo criterio que gitleaks: si semgrep no esta instalado en
+# esta maquina, solo avisa, no bloquea.
+encontrar_semgrep() {
+    if command -v semgrep >/dev/null 2>&1; then
+        echo "semgrep"
+        return 0
+    fi
+    for candidato in "$HOME/.local/bin/semgrep.exe" "$USERPROFILE/.local/bin/semgrep.exe"; do
+        if [ -f "$candidato" ]; then
+            echo "$candidato"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ARCHIVOS_PY_STAGEADOS=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -n "$ARCHIVOS_PY_STAGEADOS" ]; then
+    SEMGREP_BIN=$(encontrar_semgrep)
+    if [ -z "$SEMGREP_BIN" ]; then
+        echo "⚠️  semgrep no está instalado en esta máquina -- se salta el análisis de reglas propias."
+        echo "   Instalalo con: py -m pip install --user pipx && py -m pipx install semgrep"
+    else
+        "$SEMGREP_BIN" --config "$(git rev-parse --show-toplevel)/.semgrep/contratobot-rules.yaml" \
+            --metrics=off --error --quiet $ARCHIVOS_PY_STAGEADOS
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "❌ semgrep encontró un patrón conocido como problemático en los cambios a commitear."
+            echo "   Revisá el detalle arriba (son bugs reales que ya tuvimos en este proyecto)."
+            exit 1
+        fi
+    fi
+fi
+
+exit 0
