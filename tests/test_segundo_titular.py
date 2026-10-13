@@ -2,9 +2,10 @@
 """Prueba de excel_pipeline._formatear_celdas_segundo_titular_copropietario:
 si DATOS!E33 (ORIGEN) tiene un dato real, en FICHA/Ax.A/Ax.B/Ax.E del
 MODELO, cualquier celda que diga exactamente "SEGUNDO TITULAR/COPROPIETARIO"
-hace que la celda de ARRIBA reciba fuente Negro, y las 2 celdas de ABAJO
-reciban fuente Automático -- incluyendo el caso de celdas combinadas y el
-caso límite de que la etiqueta esté en la fila 1 (no hay "arriba").
+hace que la celda de ARRIBA reciba fuente Negro, la celda de la ETIQUETA
+misma y las 2 celdas de ABAJO reciban fuente Automático -- incluyendo el
+caso de celdas combinadas y el caso límite de que la etiqueta esté en la
+fila 1 (no hay "arriba").
 
 Corré con: py tests\\test_segundo_titular.py
 """
@@ -83,19 +84,24 @@ if __name__ == "__main__":
     print("Coincidencias encontradas: 5, OK")
 
     assert _es_negro(ws_axa["B9"]), "FALLO: Ax.A!B9 (arriba) debería ser negro"
+    assert _es_auto(ws_axa["B10"]), "FALLO: Ax.A!B10 (la etiqueta misma) debería ser automático"
     assert _es_auto(ws_axa["B11"]) and _es_auto(ws_axa["B12"]), "FALLO: Ax.A!B11/B12 (abajo) deberían ser automático"
-    print("Ax.A: arriba negro, abajo automático -- OK")
+    print("Ax.A: arriba negro, etiqueta y abajo automático -- OK")
 
     assert _es_negro(ws_axb["C19"]), "FALLO: Ax.B!C19 (arriba, combinada) debería ser negro"
+    assert _es_auto(ws_axb["C20"]), "FALLO: Ax.B!C20 (la etiqueta misma) debería ser automático"
     assert _es_auto(ws_axb["C21"]) and _es_auto(ws_axb["C22"]), "FALLO: Ax.B!C21/C22 (abajo) deberían ser automático"
-    print("Ax.B (con celdas combinadas): arriba negro, abajo automático -- OK")
+    print("Ax.B (con celdas combinadas): arriba negro, etiqueta y abajo automático -- OK")
 
+    assert _es_auto(ws_axe["A5"]), "FALLO: Ax.E!A5 (la etiqueta misma) debería ser automático"
     assert _es_auto(ws_axe["A6"]) and _es_auto(ws_axe["A7"]), "FALLO: Ax.E!A6/A7 deberían ser automático"
+    assert _es_auto(ws_axe["C1"]), "FALLO: Ax.E!C1 (la etiqueta misma, caso fila 1) debería ser automático"
     assert _es_auto(ws_axe["C2"]) and _es_auto(ws_axe["C3"]), "FALLO: caso fila 1 no debería romper el 'abajo'"
     print("Ax.E: caso normal y caso límite (etiqueta en fila 1) -- OK")
 
     assert _es_negro(ws_ficha["A1"]), "FALLO: FICHA!A1 (arriba) debería ser negro -- FICHA debe procesarse"
+    assert _es_auto(ws_ficha["A2"]), "FALLO: FICHA!A2 (la etiqueta misma) debería ser automático"
     assert _es_auto(ws_ficha["A3"]) and _es_auto(ws_ficha["A4"]), "FALLO: FICHA!A3/A4 (abajo) deberían ser automático"
-    print("FICHA (incluida en el escaneo): arriba negro, abajo automático -- OK")
+    print("FICHA (incluida en el escaneo): arriba negro, etiqueta y abajo automático -- OK")
 
     print("TODO OK")

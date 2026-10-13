@@ -339,12 +339,12 @@ def _formatear_celdas_segundo_titular_copropietario(wb_modelo):
     Ax.B, Ax.E; hasta LIMITE_COLUMNAS_ESCANEO_CONYUGE columnas por hoja,
     ver comentario arriba) las celdas cuyo valor sea exactamente
     TEXTO_SEGUNDO_TITULAR_COPROPIETARIO. A la celda de ARRIBA (misma
-    columna, una fila antes) le pone color de fuente Negro; a las DOS
-    celdas de ABAJO (misma columna, una y dos filas después) les pone
-    color de fuente Automático -- todas resolviendo a la celda ancla si
-    son parte de un rango combinado. Devuelve cuántas coincidencias del
-    texto se encontraron (sin importar cuántas celdas alrededor de cada
-    una se hayan formateado)."""
+    columna, una fila antes) le pone color de fuente Negro; a la celda
+    de la ETIQUETA misma y a las DOS celdas de ABAJO (misma columna, una
+    y dos filas después) les pone color de fuente Automático -- todas
+    resolviendo a la celda ancla si son parte de un rango combinado.
+    Devuelve cuántas coincidencias del texto se encontraron (sin importar
+    cuántas celdas alrededor de cada una se hayan formateado)."""
     from copy import copy
     coincidencias_formateadas = 0
     for nombre_hoja in HOJAS_ESCANEO_SEGUNDO_TITULAR:
@@ -361,6 +361,11 @@ def _formatear_celdas_segundo_titular_copropietario(wb_modelo):
                         nueva_font_arriba = copy(celda_arriba.font)
                         nueva_font_arriba.color = Color(rgb="FF000000")
                         celda_arriba.font = nueva_font_arriba
+
+                    celda_etiqueta = _celda_ancla_por_posicion(sheet, celda.row, celda.column)
+                    nueva_font_etiqueta = copy(celda_etiqueta.font)
+                    nueva_font_etiqueta.color = Color(auto=True)
+                    celda_etiqueta.font = nueva_font_etiqueta
 
                     for desplazamiento in (1, 2):
                         celda_debajo = _celda_ancla_por_posicion(
