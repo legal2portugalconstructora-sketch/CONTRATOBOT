@@ -116,13 +116,20 @@ def _cerrar_automatizaciones_huerfanas():
     objeto roto -- hay que sacar el huérfano de en medio ANTES, no
     reintentar después.
 
-    Identifica huérfanos por la bandera '/automation' en la línea de
-    comando -- Windows la agrega SOLO cuando el proceso se abrió vía COM,
-    nunca cuando alguien lo abre a mano (confirmado en la práctica varias
-    veces: un Excel/Word abierto por el usuario nunca la tiene) -- así que
-    nunca toca una ventana real que el usuario tenga abierta. Best-effort:
-    si algo de esto falla (ej. PowerShell no disponible), simplemente no
-    hace nada y se sigue con el Dispatch normal."""
+    Identifica huérfanos por la bandera '-Embedding' en la línea de
+    comando -- es la bandera que Windows agrega de verdad a un proceso
+    activado vía COM/OLE (CoCreateInstance, que es lo que hace Dispatch()
+    por debajo), confirmado observando procesos reales en esta máquina.
+    'nunca cuando alguien lo abre a mano (doble clic en un archivo o
+    desde el menú inicio, que lanza el proceso directo, sin pasar por
+    activación COM) -- así que nunca toca una ventana real que el
+    usuario tenga abierta. (Se revisa también '/automation' por las
+    dudas, aunque en la práctica -Embedding es la bandera real; un
+    intento anterior de este chequeo usaba SOLO '/automation', que
+    nunca aparece de verdad en la línea de comando -- por eso nunca
+    detectaba nada y los huérfanos se quedaban trabados igual.)
+    Best-effort: si algo de esto falla (ej. PowerShell no disponible),
+    simplemente no hace nada y se sigue con el Dispatch normal."""
     import json
     import subprocess
 
@@ -145,7 +152,8 @@ def _cerrar_automatizaciones_huerfanas():
             for proc in procesos:
                 command_line = (proc.get("CommandLine") or "").lower()
                 pid = proc.get("ProcessId")
-                if pid is None or "/automation" not in command_line:
+                es_huerfano = "-embedding" in command_line or "/automation" in command_line
+                if pid is None or not es_huerfano:
                     continue
                 try:
                     subprocess.run(
