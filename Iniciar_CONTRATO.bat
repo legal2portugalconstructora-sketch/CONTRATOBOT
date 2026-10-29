@@ -1,6 +1,15 @@
 @echo off
 cd /d "%~dp0"
 
+where git >nul 2>nul
+if errorlevel 1 (
+    echo No se encontro Git ni Python en esta PC todavia.
+    echo Antes de usar la app por primera vez, corre Instalar_CONTRATOBOT.bat
+    echo ^(esta en la misma carpeta^), que revisa e instala lo que falte.
+    pause
+    exit /b 1
+)
+
 echo Buscando actualizaciones...
 git pull --ff-only
 if errorlevel 1 (
