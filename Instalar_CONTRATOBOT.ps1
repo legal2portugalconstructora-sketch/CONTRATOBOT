@@ -143,14 +143,12 @@ if ($esRepoGit) {
     git config core.hooksPath .githooks
 }
 
-# --- 7) Recordatorio de lo que NO viaja con git (datos del negocio) ---
-Escribir-Titulo "Ultimos pasos -- esto NO se baja solo de GitHub"
-Write-Host "Estas carpetas/archivos tienen datos del negocio y hay que copiarlos a mano"
-Write-Host "(pediselos a Jesus/Portugal y Rivera -- por ejemplo por USB o un Drive compartido):"
-Write-Host "  - La carpeta PLANTILLAS\ completa (las plantillas de cada proyecto)"
-Write-Host "  - El archivo config.yaml (si la app vuelve a pedir usuario y contrasena)"
-Write-Host ""
-Write-Host "Una vez que esten esas 2 cosas en su lugar, ya podes abrir la app con" -ForegroundColor Green
+# --- 7) Todo listo -- PLANTILLAS/ ya vino con el git clone/pull (dejo de
+#         ser manual desde que se subio al repositorio), y config.yaml ya
+#         no hace falta (no hay login en la app). ---
+Escribir-Titulo "Listo"
+Write-Host "Ya esta todo en su lugar -- PLANTILLAS/ vino junto con el proyecto," -ForegroundColor Green
+Write-Host "no hace falta copiar nada mas a mano. Ya podes abrir la app con" -ForegroundColor Green
 Write-Host "Iniciar_CONTRATO.bat." -ForegroundColor Green
 
 Read-Host "`nPresiona Enter para salir"
