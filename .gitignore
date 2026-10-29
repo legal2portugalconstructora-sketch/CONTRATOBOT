@@ -33,9 +33,13 @@ historial_membresias.json
 modo_pruebas.json
 memoria_aprendizaje.json
 
-# Plantillas por proyecto (Word/Excel reales de cada proyecto) y la guía en
-# PDF: son contenido de negocio, no código -- git no las puede diferenciar
-# bien (son binarios) y van a crecer con el tiempo. Se siguen agregando a
-# mano en disco como hasta ahora; no forman parte de este repositorio.
-PLANTILLAS/
+# GUIA_PASO_A_PASO.pdf: se sigue agregando a mano en disco, no forma parte
+# del repositorio.
 GUIA_PASO_A_PASO.pdf
+
+# PLANTILLAS/ YA NO está acá -- desde el 2026-10-29 se sube al repositorio
+# privado a propósito (revisado antes: sin datos de clientes reales, los
+# montos/medidas que quedan son de muestra), para que se sincronice sola
+# entre PCs. Ver sincronizar_plantillas.ps1 (corre todos los días a las
+# 18:00 vía el Programador de tareas de Windows) y
+# project_contratobot_plantillas_en_git.md en la memoria.
