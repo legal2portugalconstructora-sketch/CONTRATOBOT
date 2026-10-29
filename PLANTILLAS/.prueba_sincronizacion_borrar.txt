@@ -1,1 +1,0 @@
-Archivo de prueba para confirmar que sincronizar_plantillas.ps1 funciona. Se borra enseguida.
