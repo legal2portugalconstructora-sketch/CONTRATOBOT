@@ -742,12 +742,13 @@ elif paso_actual == 3:
             # para armar el registro -- se omite (mismo criterio que
             # guardar_copia más arriba).
             if _lote and _nombre_cliente:
-                st.session_state["n8n_estado"] = registrar_contrato_en_n8n(
+                st.session_state["n8n_estado"], st.session_state["n8n_advertencias"] = registrar_contrato_en_n8n(
                     excel_bytes_recalculado, proyecto_seleccionado, _lote, _nombre_cliente,
                     numero_membresia, opcion_propiedad,
                 )
             else:
                 st.session_state["n8n_estado"] = None
+                st.session_state["n8n_advertencias"] = []
         if reglamento_resultado_bytes is not None:
             _r, _motivo_reglamento = guardar_copia(
                 proyecto_seleccionado, _lote, _nombre_cliente, "REGLAMENTO.docx", reglamento_resultado_bytes,
@@ -794,6 +795,8 @@ elif paso_actual == 4:
         st.caption(f'📡 {_n8n_estado}')
     elif _n8n_estado:
         st.caption(f'⏳ {_n8n_estado}')
+    for _advertencia_n8n in st.session_state.get("n8n_advertencias") or []:
+        st.warning(f'⚠️ {_advertencia_n8n}')
 
     if st.session_state["word_resultado_bytes"] is not None:
         info = st.session_state["word_info"]
@@ -895,6 +898,7 @@ elif paso_actual == 4:
         st.session_state["membresia_error"] = None
         st.session_state["derechohabientes_error"] = None
         st.session_state["n8n_estado"] = None
+        st.session_state["n8n_advertencias"] = []
         _ir_a_paso(0)
 
 # Fondo de imagen por proyecto (si el proyecto ya elegido tiene un archivo

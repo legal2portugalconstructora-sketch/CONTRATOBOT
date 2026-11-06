@@ -56,16 +56,23 @@ def _texto(valor):
     return str(valor).strip()
 
 
-def _texto_documento(valor, tipo_doc):
-    """Igual que _texto(), pero si 'tipo_doc' contiene "DNI" y el
-    resultado quedó con menos de 8 dígitos (ej. Excel guardó '5208' como
-    número y perdió los ceros a la izquierda), lo completa a 8 dígitos."""
+def _texto_documento(valor, tipo_doc, etiqueta=""):
+    """Igual que _texto(), pero si 'tipo_doc' contiene "DNI": si quedó con
+    7 dígitos (Excel le quitó el cero inicial, ej. '5208' guardado como
+    número en vez de '05208'), lo completa a 8 con un cero a la
+    izquierda. Si quedó con menos de 7 o más de 8, se envía tal cual y se
+    devuelve una advertencia para mostrar en pantalla (puede ser un dato
+    mal tipeado, no un problema de Excel que se pueda corregir solo).
+    Devuelve (texto, advertencia_o_None)."""
     texto = _texto(valor)
     if "DNI" in _texto(tipo_doc).upper():
         digitos = solo_digitos(texto)
-        if 0 < len(digitos) < 8:
-            return digitos.zfill(8)
-    return texto
+        cantidad = len(digitos)
+        if cantidad == 7:
+            return digitos.zfill(8), None
+        if 0 < cantidad < 7 or cantidad > 8:
+            return texto, f"Revisa el DNI{etiqueta}: tiene {cantidad} dígitos"
+    return texto, None
 
 
 def _numero(valor):
@@ -109,7 +116,11 @@ def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia,
     """Arma el dict de 32 claves que se envía a n8n, leyendo el Excel ya
     recalculado (el mismo que usa historial_contratos.extraer_lote_y_nombre).
     Nunca lanza excepción -- si algo puntual falla al leer una celda, esa
-    celda queda vacía/0 en vez de cortar todo el envío."""
+    celda queda vacía/0 en vez de cortar todo el envío.
+
+    Devuelve (payload, advertencias): 'advertencias' es una lista de
+    textos para mostrar en pantalla (ej. un DNI con una cantidad de
+    dígitos rara que no se pudo corregir solo, ver _texto_documento)."""
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
@@ -122,13 +133,24 @@ def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia,
     def _cot(celda):
         return sheet_cot[celda].value if sheet_cot is not None else None
 
+    advertencias = []
+
     tipo_doc = _texto(_datos("E12"))
-    nro_doc = _texto_documento(_datos("E13"), tipo_doc)
+    nro_doc, _advertencia_nro_doc = _texto_documento(_datos("E13"), tipo_doc)
+    if _advertencia_nro_doc:
+        advertencias.append(_advertencia_nro_doc)
 
     hay_copropietario = not es_marcador_vacio(_datos("E33"))
     copropietario = _texto(_datos("E33")) if hay_copropietario else ""
     copropietario_tipo_doc = _texto(_datos("E34")) if hay_copropietario else ""
-    copropietario_nro_doc = _texto_documento(_datos("E35"), copropietario_tipo_doc) if hay_copropietario else ""
+    if hay_copropietario:
+        copropietario_nro_doc, _advertencia_coprop_doc = _texto_documento(
+            _datos("E35"), copropietario_tipo_doc, etiqueta=" del copropietario"
+        )
+        if _advertencia_coprop_doc:
+            advertencias.append(_advertencia_coprop_doc)
+    else:
+        copropietario_nro_doc = ""
     copropietario_celular = _texto(_datos("E49")) if hay_copropietario else ""
 
     montos_iniciales = [_numero(_cot(f"I{fila}")) for fila in (25, 26, 27, 28, 29)]
@@ -169,7 +191,7 @@ def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia,
         "RUTA_CARPETA": ruta_carpeta,
         "ESTADO": "PRUEBA" if modo_pruebas_activo() else "GENERADO",
     }
-    return payload
+    return payload, advertencias
 
 
 # =========================================================================
@@ -228,23 +250,25 @@ def reintentar_pendientes_n8n():
 
 def registrar_contrato_en_n8n(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad):
     """Función principal: reintenta pendientes viejos, arma y envía el
-    payload de ESTE contrato. Devuelve un texto corto para mostrar en
-    pantalla. Nunca lanza excepción hacia afuera."""
+    payload de ESTE contrato. Devuelve (texto_corto, advertencias) para
+    mostrar en pantalla. Nunca lanza excepción hacia afuera."""
     try:
         url = _leer_url_webhook()
         if not url:
-            return "n8n no está configurado (falta 'n8n_webhook_url' en config.yaml)"
+            return "n8n no está configurado (falta 'n8n_webhook_url' en config.yaml)", []
 
         reintentar_pendientes_n8n()
 
-        payload = armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad)
+        payload, advertencias = armar_payload(
+            excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad
+        )
         exito, _motivo = _enviar(url, payload)
         if exito:
-            return "Registrado en el registro maestro"
+            return "Registrado en el registro maestro", advertencias
 
         pendientes = _cargar_pendientes()
         pendientes.append(payload)
         _guardar_pendientes(pendientes)
-        return "Pendiente de registrar (n8n apagado)"
+        return "Pendiente de registrar (n8n apagado)", advertencias
     except Exception as exc:
-        return f"No se pudo registrar en n8n: {exc}"
+        return f"No se pudo registrar en n8n: {exc}", []
