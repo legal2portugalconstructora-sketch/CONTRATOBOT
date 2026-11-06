@@ -62,7 +62,12 @@ encontrar_semgrep() {
     return 1
 }
 
-ARCHIVOS_PY_STAGEADOS=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+# core.quotepath=false: si no, git escapa nombres de archivo con caracteres
+# no-ASCII (ej. "pages/2_🤖CONTRATO_Word.py") con comillas y secuencias
+# octales, y esa ruta "escapada" no existe en el disco -- semgrep la
+# rechaza con error (no con un hallazgo real) y el hook bloquea el commit
+# por error.
+ARCHIVOS_PY_STAGEADOS=$(git -c core.quotepath=false diff --cached --name-only --diff-filter=ACM -- '*.py')
 if [ -n "$ARCHIVOS_PY_STAGEADOS" ]; then
     SEMGREP_BIN=$(encontrar_semgrep)
     if [ -z "$SEMGREP_BIN" ]; then

@@ -23,3 +23,9 @@ cookie:
   name: contratobot_auth_cookie
   key: REEMPLAZAR_CON_UNA_CLAVE_ALEATORIA_LARGA
   expiry_days: 7
+
+# URL del webhook de n8n que recibe un aviso cada vez que se genera un
+# CONTRATO en el módulo Word (ver n8n_integracion.py). Si esta clave no
+# existe o está vacía, la app simplemente no envía nada a n8n -- no hace
+# falta tenerla configurada para que el resto de la app funcione.
+n8n_webhook_url: http://localhost:5678/webhook/registrar-contrato

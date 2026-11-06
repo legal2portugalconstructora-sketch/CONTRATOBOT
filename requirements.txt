@@ -8,6 +8,7 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 bcrypt==5.0.0
 rapidfuzz==3.14.6
+requests==2.34.2
 
 # Solo se usa en tests/test_pdf_calidad_imagen.py (para inspeccionar la
 # resolucion real de las imagenes dentro de un PDF generado) -- la app en

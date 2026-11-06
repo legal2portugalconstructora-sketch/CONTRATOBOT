@@ -23,6 +23,7 @@ from rapidfuzz import fuzz
 from auth_utils import requerir_login, mostrar_boton_logout
 from ui_utils import mostrar_logo, RUTA_LOGO, MODULOS, ACCIONES_RAPIDAS, PREGUNTAS_FRECUENTES
 from stats_tracker import obtener_resumen, modo_pruebas_activo, establecer_modo_pruebas
+from n8n_integracion import reintentar_pendientes_n8n
 
 load_dotenv()
 
@@ -32,6 +33,13 @@ authenticator = requerir_login()
 mostrar_boton_logout(authenticator)
 
 mostrar_logo()
+
+# Reintenta avisos a n8n que hayan quedado pendientes (ver
+# n8n_integracion.py) -- UNA sola vez por sesión de navegador, no en cada
+# interacción/rerun de Streamlit (que pasa muy seguido).
+if not st.session_state.get("n8n_reintento_hecho"):
+    reintentar_pendientes_n8n()
+    st.session_state["n8n_reintento_hecho"] = True
 
 nombre_usuario = st.session_state.get("name", "")
 

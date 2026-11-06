@@ -22,6 +22,7 @@ from historial_contratos import (
     obtener_historial_membresias,
 )
 from stats_tracker import registrar_generacion, modo_pruebas_activo, establecer_modo_pruebas
+from n8n_integracion import registrar_contrato_en_n8n
 from excel_pipeline import HOJA_AXA, HOJA_AXB
 from word_pipeline import (
     OPCIONES_PROPIEDAD,
@@ -734,6 +735,19 @@ elif paso_actual == 3:
             )
             if _r:
                 _rutas_archivadas.append(_r)
+
+            # Aviso a n8n (registro maestro externo, ver n8n_integracion.py):
+            # un POST por CONTRATO generado, nunca por REGLAMENTO/MEMBRESIA/
+            # DERECHOHABIENTES. Si falta lote/nombre, no hay datos suficientes
+            # para armar el registro -- se omite (mismo criterio que
+            # guardar_copia más arriba).
+            if _lote and _nombre_cliente:
+                st.session_state["n8n_estado"] = registrar_contrato_en_n8n(
+                    excel_bytes_recalculado, proyecto_seleccionado, _lote, _nombre_cliente,
+                    numero_membresia, opcion_propiedad,
+                )
+            else:
+                st.session_state["n8n_estado"] = None
         if reglamento_resultado_bytes is not None:
             _r, _motivo_reglamento = guardar_copia(
                 proyecto_seleccionado, _lote, _nombre_cliente, "REGLAMENTO.docx", reglamento_resultado_bytes,
@@ -774,6 +788,12 @@ elif paso_actual == 4:
         st.caption(f'📁 Archivado en: `{st.session_state["archivo_carpeta_archivada"]}`')
     elif st.session_state.get("archivo_motivo_no_archivado"):
         st.caption(f'⚠️ No se archivó en CONTRATOS\\: {st.session_state["archivo_motivo_no_archivado"]}.')
+
+    _n8n_estado = st.session_state.get("n8n_estado")
+    if _n8n_estado == "Registrado en el registro maestro":
+        st.caption(f'📡 {_n8n_estado}')
+    elif _n8n_estado:
+        st.caption(f'⏳ {_n8n_estado}')
 
     if st.session_state["word_resultado_bytes"] is not None:
         info = st.session_state["word_info"]
@@ -874,6 +894,7 @@ elif paso_actual == 4:
         st.session_state["reglamento_error"] = None
         st.session_state["membresia_error"] = None
         st.session_state["derechohabientes_error"] = None
+        st.session_state["n8n_estado"] = None
         _ir_a_paso(0)
 
 # Fondo de imagen por proyecto (si el proyecto ya elegido tiene un archivo
