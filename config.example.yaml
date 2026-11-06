@@ -29,3 +29,18 @@ cookie:
 # existe o está vacía, la app simplemente no envía nada a n8n -- no hace
 # falta tenerla configurada para que el resto de la app funcione.
 n8n_webhook_url: http://localhost:5678/webhook/registrar-contrato
+
+# Código corto de cada proyecto, usado para armar el ID_CONTRATO
+# (CODIGO-AAAA-NNNN, ej. "CDV-2026-0001") que se le asigna a cada
+# CONTRATO la primera vez que se genera (ver n8n_integracion.py,
+# _obtener_o_asignar_id_contrato). Si un proyecto no aparece acá, no se
+# le asigna ningún ID inventado -- se avisa en pantalla que falta
+# agregarlo.
+codigos_proyecto:
+  COSTA DEL VALLE: CDV
+  COSTA DEL LAGO: CDL
+  COSTA AZUL: CAZ
+  COSTA DEL SOL: CDS
+  FINCA DEL VALLE: FDV
+  HACIENDA CHIRIBAYA: HCH
+  RIVIERA COAST: RVC

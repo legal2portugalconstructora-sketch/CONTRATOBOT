@@ -742,13 +742,18 @@ elif paso_actual == 3:
             # para armar el registro -- se omite (mismo criterio que
             # guardar_copia más arriba).
             if _lote and _nombre_cliente:
-                st.session_state["n8n_estado"], st.session_state["n8n_advertencias"] = registrar_contrato_en_n8n(
+                (
+                    st.session_state["n8n_estado"],
+                    st.session_state["n8n_advertencias"],
+                    st.session_state["n8n_id_contrato"],
+                ) = registrar_contrato_en_n8n(
                     excel_bytes_recalculado, proyecto_seleccionado, _lote, _nombre_cliente,
                     numero_membresia, opcion_propiedad,
                 )
             else:
                 st.session_state["n8n_estado"] = None
                 st.session_state["n8n_advertencias"] = []
+                st.session_state["n8n_id_contrato"] = None
         if reglamento_resultado_bytes is not None:
             _r, _motivo_reglamento = guardar_copia(
                 proyecto_seleccionado, _lote, _nombre_cliente, "REGLAMENTO.docx", reglamento_resultado_bytes,
@@ -791,10 +796,14 @@ elif paso_actual == 4:
         st.caption(f'⚠️ No se archivó en CONTRATOS\\: {st.session_state["archivo_motivo_no_archivado"]}.')
 
     _n8n_estado = st.session_state.get("n8n_estado")
+    _n8n_id = st.session_state.get("n8n_id_contrato")
+    _n8n_sufijo_id = f" (ID: {_n8n_id})" if _n8n_id else ""
     if _n8n_estado == "Registrado en el registro maestro":
-        st.caption(f'📡 {_n8n_estado}')
+        st.caption(f'📡 {_n8n_estado}{_n8n_sufijo_id}')
+    elif _n8n_estado and _n8n_estado.startswith("Falta el código del proyecto"):
+        st.error(f'❌ {_n8n_estado}')
     elif _n8n_estado:
-        st.caption(f'⏳ {_n8n_estado}')
+        st.caption(f'⏳ {_n8n_estado}{_n8n_sufijo_id}')
     for _advertencia_n8n in st.session_state.get("n8n_advertencias") or []:
         st.warning(f'⚠️ {_advertencia_n8n}')
 
@@ -899,6 +908,7 @@ elif paso_actual == 4:
         st.session_state["derechohabientes_error"] = None
         st.session_state["n8n_estado"] = None
         st.session_state["n8n_advertencias"] = []
+        st.session_state["n8n_id_contrato"] = None
         _ir_a_paso(0)
 
 # Fondo de imagen por proyecto (si el proyecto ya elegido tiene un archivo

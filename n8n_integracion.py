@@ -22,6 +22,7 @@ from stats_tracker import modo_pruebas_activo
 
 RUTA_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
 RUTA_PENDIENTES_N8N = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pendientes_n8n.json")
+RUTA_CORRELATIVOS_CONTRATO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "correlativos_contrato.json")
 
 _MAX_PENDIENTES_GUARDADOS = 200
 _TIMEOUT_SEGUNDOS = 15
@@ -42,6 +43,23 @@ def _leer_url_webhook():
     except (OSError, yaml.YAMLError):
         pass
     return None
+
+
+def _leer_codigos_proyecto():
+    """Lee 'codigos_proyecto' de config.yaml (ej. {'COSTA DEL VALLE':
+    'CDV'}) -> {PROYECTO EN MAYÚSCULAS: CODIGO}. Devuelve {} (no rompe
+    nada) si falta el archivo o la clave."""
+    try:
+        with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
+            datos = yaml.safe_load(f)
+        if isinstance(datos, dict) and isinstance(datos.get("codigos_proyecto"), dict):
+            return {
+                str(proyecto).strip().upper(): str(codigo).strip()
+                for proyecto, codigo in datos["codigos_proyecto"].items()
+            }
+    except (OSError, yaml.YAMLError):
+        pass
+    return {}
 
 
 # =========================================================================
@@ -112,11 +130,14 @@ _RELACION_POR_OPCION = {
 }
 
 
-def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad):
+def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad, id_contrato):
     """Arma el dict de 32 claves que se envía a n8n, leyendo el Excel ya
     recalculado (el mismo que usa historial_contratos.extraer_lote_y_nombre).
-    Nunca lanza excepción -- si algo puntual falla al leer una celda, esa
-    celda queda vacía/0 en vez de cortar todo el envío.
+    'id_contrato' ya viene resuelto por el llamador (ver
+    _obtener_o_asignar_id_contrato) -- esta función solo lo coloca en el
+    payload, no decide cómo se arma. Nunca lanza excepción -- si algo
+    puntual falla al leer una celda, esa celda queda vacía/0 en vez de
+    cortar todo el envío.
 
     Devuelve (payload, advertencias): 'advertencias' es una lista de
     textos para mostrar en pantalla (ej. un DNI con una cantidad de
@@ -158,7 +179,7 @@ def armar_payload(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia,
     ruta_carpeta, _ = carpeta_cliente(proyecto, lote, nombre_cliente, crear=False)
 
     payload = {
-        "ID_CONTRATO": f"{_texto(proyecto)}-{_texto(lote)}-{nro_doc}",
+        "ID_CONTRATO": id_contrato,
         "FECHA_GENERACION": datetime.now(_ZONA_LIMA).strftime("%Y-%m-%d %H:%M"),
         "PROYECTO": _texto(proyecto),
         "LOTE": _texto(lote),
@@ -248,27 +269,127 @@ def reintentar_pendientes_n8n():
     _guardar_pendientes(quedan)
 
 
+# =========================================================================
+# ID_CONTRATO -- numerador propio de la app (CODIGO-AAAA-NNNN), ver
+# n8n_integracion.py en el plan: corre SIEMPRE que se genera un CONTRATO,
+# aunque n8n no esté configurado -- no es solo un dato para el payload.
+# =========================================================================
+def _cargar_correlativos():
+    if not os.path.exists(RUTA_CORRELATIVOS_CONTRATO):
+        return {"reales": {}, "pruebas": {}}
+    try:
+        with open(RUTA_CORRELATIVOS_CONTRATO, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {"reales": {}, "pruebas": {}}
+    if not isinstance(datos, dict):
+        return {"reales": {}, "pruebas": {}}
+    datos.setdefault("reales", {})
+    datos.setdefault("pruebas", {})
+    return datos
+
+
+def _guardar_correlativos(datos):
+    with open(RUTA_CORRELATIVOS_CONTRATO, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, indent=2)
+
+
+def _siguiente_correlativo(codigo, anio, pruebas):
+    """Incrementa en 1 el correlativo de 'codigo-anio' (grupo 'pruebas' o
+    'reales' según corresponda), lo guarda, y devuelve el nuevo número."""
+    datos = _cargar_correlativos()
+    grupo = "pruebas" if pruebas else "reales"
+    clave = f"{codigo}-{anio}"
+    siguiente = datos[grupo].get(clave, 0) + 1
+    datos[grupo][clave] = siguiente
+    _guardar_correlativos(datos)
+    return siguiente
+
+
+def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
+    """Devuelve (id_contrato, error_o_None), formato CODIGO-AAAA-NNNN
+    (ej. "CDV-2026-0001"), o "PRUEBA-CODIGO-AAAA-NNNN" con Modo de
+    pruebas activo (contador separado, para no gastar números reales).
+
+    - Fuera de Modo de pruebas: si la carpeta de este cliente ya tiene un
+      ID_CONTRATO.txt (de una generación anterior), lo reutiliza tal
+      cual. Si no, asigna el siguiente correlativo del año actual para
+      el código de este proyecto y lo guarda en ID_CONTRATO.txt dentro
+      de esa carpeta.
+    - En Modo de pruebas: nunca lee ni escribe ID_CONTRATO.txt (para no
+      tocar la carpeta de un cliente real) -- genera un ID de prueba
+      nuevo cada vez.
+    - Si el proyecto no tiene código en config.yaml ('codigos_proyecto'):
+      (None, "Falta el código del proyecto {proyecto} en config.yaml"),
+      sin gastar ningún correlativo.
+
+    Cada operación de disco va en su propio try/except OSError: si la
+    carpeta de archivo (ver historial_contratos.RAIZ_HISTORIAL) no es
+    accesible en esta máquina, el ID se asigna igual (con el correlativo
+    ya gastado), solo que no queda guardado para la próxima regeneración
+    -- mismo criterio de "mejor esfuerzo" que el resto de este módulo."""
+    pruebas = modo_pruebas_activo()
+    codigos = _leer_codigos_proyecto()
+    codigo = codigos.get(_texto(proyecto).strip().upper())
+    if not codigo:
+        return None, f"Falta el código del proyecto {_texto(proyecto)} en config.yaml"
+
+    anio = datetime.now(_ZONA_LIMA).year
+    ruta_id = None
+
+    if not pruebas:
+        try:
+            carpeta, _ = carpeta_cliente(proyecto, lote, nombre_cliente, crear=True)
+            ruta_id = os.path.join(carpeta, "ID_CONTRATO.txt")
+            if os.path.isfile(ruta_id):
+                with open(ruta_id, "r", encoding="utf-8") as f:
+                    existente = f.read().strip()
+                if existente:
+                    return existente, None
+        except OSError:
+            pass
+
+    correlativo = _siguiente_correlativo(codigo, anio, pruebas)
+    id_contrato = f"{codigo}-{anio}-{correlativo:04d}"
+    if pruebas:
+        return f"PRUEBA-{id_contrato}", None
+
+    if ruta_id:
+        try:
+            with open(ruta_id, "w", encoding="utf-8") as f:
+                f.write(id_contrato)
+        except OSError:
+            pass
+    return id_contrato, None
+
+
 def registrar_contrato_en_n8n(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad):
-    """Función principal: reintenta pendientes viejos, arma y envía el
-    payload de ESTE contrato. Devuelve (texto_corto, advertencias) para
+    """Función principal: asigna/reutiliza el ID_CONTRATO (ver
+    _obtener_o_asignar_id_contrato, corre siempre, con o sin n8n
+    configurado), reintenta pendientes viejos, arma y envía el payload de
+    ESTE contrato. Devuelve (texto_corto, advertencias, id_contrato) para
     mostrar en pantalla. Nunca lanza excepción hacia afuera."""
     try:
+        id_contrato, error_id = _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente)
+        if error_id:
+            return error_id, [], None
+
         url = _leer_url_webhook()
         if not url:
-            return "n8n no está configurado (falta 'n8n_webhook_url' en config.yaml)", []
+            return "n8n no está configurado (falta 'n8n_webhook_url' en config.yaml)", [], id_contrato
 
         reintentar_pendientes_n8n()
 
         payload, advertencias = armar_payload(
-            excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad
+            excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad, id_contrato
         )
         exito, _motivo = _enviar(url, payload)
         if exito:
-            return "Registrado en el registro maestro", advertencias
+            return "Registrado en el registro maestro", advertencias, id_contrato
 
         pendientes = _cargar_pendientes()
         pendientes.append(payload)
         _guardar_pendientes(pendientes)
-        return "Pendiente de registrar (n8n apagado)", advertencias
+        return "Pendiente de registrar (n8n apagado)", advertencias, id_contrato
     except Exception as exc:
-        return f"No se pudo registrar en n8n: {exc}", []
+        return f"No se pudo registrar en n8n: {exc}", [], None
