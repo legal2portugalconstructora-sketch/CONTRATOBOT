@@ -45,10 +45,12 @@ def _leer_url_webhook():
     return None
 
 
-def _leer_codigos_proyecto():
+def obtener_codigos_proyecto():
     """Lee 'codigos_proyecto' de config.yaml (ej. {'COSTA DEL VALLE':
     'CDV'}) -> {PROYECTO EN MAYÚSCULAS: CODIGO}. Devuelve {} (no rompe
-    nada) si falta el archivo o la clave."""
+    nada) si falta el archivo o la clave. Pública: también la usa la
+    pantalla de Configuración (ver Inicio.py) para el ajuste manual del
+    correlativo."""
     try:
         with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
             datos = yaml.safe_load(f)
@@ -306,6 +308,25 @@ def _siguiente_correlativo(codigo, anio, pruebas):
     return siguiente
 
 
+def obtener_correlativo_actual(codigo, anio):
+    """Devuelve el correlativo 'reales' guardado para 'codigo-anio' (0 si
+    todavía no se asignó ninguno) -- el próximo ID automático sería este
+    número + 1. Pública: la usa la pantalla de Configuración (ver
+    Inicio.py) para mostrar el valor actual antes de ajustarlo a mano."""
+    return _cargar_correlativos()["reales"].get(f"{codigo}-{anio}", 0)
+
+
+def fijar_correlativo_real(codigo, anio, valor):
+    """Ajusta a mano el correlativo 'reales' de 'codigo-anio' a 'valor'.
+    Uso excepcional: cuando se asignó un ID_CONTRATO a mano fuera de la
+    app (ej. en la matriz de contratos), para que el siguiente ID
+    automático de ese proyecto+año no repita un número ya usado. Nunca
+    toca el contador de 'pruebas'."""
+    datos = _cargar_correlativos()
+    datos["reales"][f"{codigo}-{anio}"] = int(valor)
+    _guardar_correlativos(datos)
+
+
 def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
     """Devuelve (id_contrato, error_o_None), formato CODIGO-AAAA-NNNN
     (ej. "CDV-2026-0001"), o "PRUEBA-CODIGO-AAAA-NNNN" con Modo de
@@ -329,7 +350,7 @@ def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
     ya gastado), solo que no queda guardado para la próxima regeneración
     -- mismo criterio de "mejor esfuerzo" que el resto de este módulo."""
     pruebas = modo_pruebas_activo()
-    codigos = _leer_codigos_proyecto()
+    codigos = obtener_codigos_proyecto()
     codigo = codigos.get(_texto(proyecto).strip().upper())
     if not codigo:
         return None, f"Falta el código del proyecto {_texto(proyecto)} en config.yaml"

@@ -15,6 +15,7 @@ muestran en cero de forma explícita, no se inventa nada.
 """
 
 import unicodedata
+from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -23,7 +24,12 @@ from rapidfuzz import fuzz
 from auth_utils import requerir_login, mostrar_boton_logout
 from ui_utils import mostrar_logo, RUTA_LOGO, MODULOS, ACCIONES_RAPIDAS, PREGUNTAS_FRECUENTES
 from stats_tracker import obtener_resumen, modo_pruebas_activo, establecer_modo_pruebas
-from n8n_integracion import reintentar_pendientes_n8n
+from n8n_integracion import (
+    reintentar_pendientes_n8n,
+    obtener_codigos_proyecto,
+    obtener_correlativo_actual,
+    fijar_correlativo_real,
+)
 
 load_dotenv()
 
@@ -305,6 +311,42 @@ with col_config:
             establecer_modo_pruebas(_modo_pruebas_nuevo)
         if _modo_pruebas_nuevo:
             st.caption("🧪 Activo: las estadísticas no se están actualizando ahora mismo.")
+
+        st.divider()
+        with st.expander("🔢 Corregir correlativo de ID_CONTRATO (uso excepcional)"):
+            st.caption(
+                "Solo si asignaste un ID_CONTRATO a mano fuera de la app (ej. en la "
+                "matriz de contratos) -- subí aquí el correlativo para que el siguiente "
+                "ID automático de ese proyecto no repita un número que ya usaste."
+            )
+            _codigos_disponibles = obtener_codigos_proyecto()
+            if not _codigos_disponibles:
+                st.caption("No hay proyectos con código configurado (ver 'codigos_proyecto' en config.yaml).")
+            else:
+                _proyecto_corr = st.selectbox(
+                    "Proyecto", sorted(_codigos_disponibles.keys()), key="sel_proyecto_correlativo",
+                )
+                _codigo_corr = _codigos_disponibles[_proyecto_corr]
+                _anio_corr = st.number_input(
+                    "Año", min_value=2000, max_value=2100,
+                    value=datetime.now().year, step=1, key="num_anio_correlativo",
+                )
+                _correlativo_actual = obtener_correlativo_actual(_codigo_corr, int(_anio_corr))
+                st.caption(
+                    f"Correlativo actual de {_codigo_corr}-{int(_anio_corr)}: "
+                    f"**{_correlativo_actual:04d}** (el próximo automático sería "
+                    f"{_codigo_corr}-{int(_anio_corr)}-{_correlativo_actual + 1:04d})."
+                )
+                _nuevo_correlativo = st.number_input(
+                    "Subir correlativo a", min_value=0, max_value=9999,
+                    value=_correlativo_actual, step=1, key="num_nuevo_correlativo",
+                )
+                if st.button("Guardar correlativo", key="btn_guardar_correlativo"):
+                    fijar_correlativo_real(_codigo_corr, int(_anio_corr), int(_nuevo_correlativo))
+                    st.success(
+                        f"Listo. El próximo CONTRATO de {_codigo_corr}-{int(_anio_corr)} va a "
+                        f"ser {_codigo_corr}-{int(_anio_corr)}-{int(_nuevo_correlativo) + 1:04d}."
+                    )
 st.markdown('</div>', unsafe_allow_html=True)
 
 if _modo_pruebas_nuevo:
