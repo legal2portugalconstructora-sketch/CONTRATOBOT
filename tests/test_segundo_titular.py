@@ -4,8 +4,13 @@ si DATOS!E33 (ORIGEN) tiene un dato real, en FICHA/Ax.A/Ax.B/Ax.E del
 MODELO, cualquier celda que diga exactamente "SEGUNDO TITULAR/COPROPIETARIO"
 hace que la celda de ARRIBA reciba fuente Negro, la celda de la ETIQUETA
 misma y las 2 celdas de ABAJO reciban fuente Automático -- incluyendo el
-caso de celdas combinadas y el caso límite de que la etiqueta esté en la
-fila 1 (no hay "arriba").
+caso de celdas combinadas, el caso límite de que la etiqueta esté en la
+fila 1 (no hay "arriba"), y el caso de COSTA DEL LAGO (bug real,
+2026-11-11): una celda que en vez del texto literal tiene una FÓRMULA que
+referencia una sola celda de otra hoja (ej. "=Ax.A!$I$145") -- como
+wb_modelo se carga con data_only=False, celda.value da la fórmula en texto,
+no lo que Excel mostraría; _valor_mostrado_en_celda() resuelve esa
+referencia antes de comparar.
 
 Corré con: py tests\\test_segundo_titular.py
 """
@@ -74,14 +79,22 @@ if __name__ == "__main__":
     ws_ficha["A3"] = "nombre ficha"
     ws_ficha["A4"] = "dni ficha"
 
+    # Caso COSTA DEL LAGO: Ax.E tiene una FÓRMULA que referencia a Ax.A!B10
+    # (que sí tiene el texto literal) en vez de repetir el texto -- debe
+    # resolverse igual que si dijera el texto directamente.
+    ws_axe["F5"] = "arriba formula"
+    ws_axe["F6"] = "=Ax.A!$B$10"
+    ws_axe["F7"] = "nombre formula"
+    ws_axe["F8"] = "dni formula"
+
     alertas, resumen = [], {"filas_procesadas": 0, "filas_con_guion_ignoradas": 0}
     _procesar_paso1_datos_wb(wb_ori, wb_mod, [], alertas, resumen)
 
-    assert resumen.get("segundo_titular_celdas_formateadas") == 5, (
-        f"FALLO: se esperaban 5 coincidencias (Ax.A, Ax.B, Ax.E x2, FICHA), "
+    assert resumen.get("segundo_titular_celdas_formateadas") == 6, (
+        f"FALLO: se esperaban 6 coincidencias (Ax.A, Ax.B, Ax.E x3, FICHA), "
         f"vinieron {resumen.get('segundo_titular_celdas_formateadas')}"
     )
-    print("Coincidencias encontradas: 5, OK")
+    print("Coincidencias encontradas: 6, OK")
 
     assert _es_negro(ws_axa["B9"]), "FALLO: Ax.A!B9 (arriba) debería ser negro"
     assert _es_auto(ws_axa["B10"]), "FALLO: Ax.A!B10 (la etiqueta misma) debería ser automático"
@@ -98,6 +111,11 @@ if __name__ == "__main__":
     assert _es_auto(ws_axe["C1"]), "FALLO: Ax.E!C1 (la etiqueta misma, caso fila 1) debería ser automático"
     assert _es_auto(ws_axe["C2"]) and _es_auto(ws_axe["C3"]), "FALLO: caso fila 1 no debería romper el 'abajo'"
     print("Ax.E: caso normal y caso límite (etiqueta en fila 1) -- OK")
+
+    assert _es_negro(ws_axe["F5"]), "FALLO: Ax.E!F5 (arriba de la fórmula) debería ser negro"
+    assert _es_auto(ws_axe["F6"]), "FALLO: Ax.E!F6 (la fórmula misma, resuelta) debería ser automático"
+    assert _es_auto(ws_axe["F7"]) and _es_auto(ws_axe["F8"]), "FALLO: Ax.E!F7/F8 (abajo de la fórmula) deberían ser automático"
+    print("Ax.E: fórmula que referencia otra hoja (caso COSTA DEL LAGO) se resuelve igual que el texto literal -- OK")
 
     assert _es_negro(ws_ficha["A1"]), "FALLO: FICHA!A1 (arriba) debería ser negro -- FICHA debe procesarse"
     assert _es_auto(ws_ficha["A2"]), "FALLO: FICHA!A2 (la etiqueta misma) debería ser automático"

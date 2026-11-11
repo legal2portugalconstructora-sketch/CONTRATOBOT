@@ -334,10 +334,44 @@ def _celda_ancla_por_posicion(sheet, fila, columna):
     return sheet.cell(row=fila, column=columna)
 
 
+# Referencia simple a UNA celda de otra hoja del mismo libro, ej.
+# "=Ax.A!$I$145" o "=+Ax.A!I145" -- algunos proyectos (ej. COSTA DEL
+# LAGO) no repiten el texto de TEXTO_SEGUNDO_TITULAR_COPROPIETARIO en
+# cada hoja: en vez de eso, la celda tiene esta fórmula apuntando a la
+# hoja que sí tiene el texto literal (típicamente "Ax.A"). Ver
+# _valor_mostrado_en_celda, abajo.
+_PATRON_REFERENCIA_SIMPLE_A_OTRA_CELDA = re.compile(
+    r"^=\+?'?([A-Za-z0-9_. ]+)'?!\$?([A-Za-z]{1,3})\$?(\d+)$"
+)
+
+
+def _valor_mostrado_en_celda(wb_modelo, celda):
+    """Devuelve el texto que Excel mostraría en 'celda' -- igual a
+    'celda.value' si es un valor literal, pero si es una fórmula que
+    apunta a UNA sola celda de otra hoja del mismo libro (ver patrón
+    arriba), resuelve esa referencia y devuelve el valor literal de la
+    celda referenciada en su lugar (solo un nivel: si la celda
+    referenciada es a su vez otra fórmula, se devuelve tal cual, sin
+    seguir encadenando). Necesario porque wb_modelo se carga con
+    data_only=False (hace falta para poder escribirlo después), así que
+    una fórmula nunca trae el valor ya calculado por Excel."""
+    valor = celda.value
+    if not (isinstance(valor, str) and valor.startswith("=")):
+        return valor
+    coincidencia = _PATRON_REFERENCIA_SIMPLE_A_OTRA_CELDA.match(valor.strip())
+    if not coincidencia:
+        return valor
+    nombre_hoja_ref, columna_ref, fila_ref = coincidencia.groups()
+    if nombre_hoja_ref not in wb_modelo.sheetnames:
+        return valor
+    return _lee(wb_modelo[nombre_hoja_ref], f"{columna_ref}{fila_ref}")
+
+
 def _formatear_celdas_segundo_titular_copropietario(wb_modelo):
     """Busca en las hojas de HOJAS_ESCANEO_SEGUNDO_TITULAR (FICHA, Ax.A,
     Ax.B, Ax.E; hasta LIMITE_COLUMNAS_ESCANEO_CONYUGE columnas por hoja,
-    ver comentario arriba) las celdas cuyo valor sea exactamente
+    ver comentario arriba) las celdas cuyo valor (ya resuelto, ver
+    _valor_mostrado_en_celda) sea exactamente
     TEXTO_SEGUNDO_TITULAR_COPROPIETARIO. A la celda de ARRIBA (misma
     columna, una fila antes) le pone color de fuente Negro; a la celda
     de la ETIQUETA misma y a las DOS celdas de ABAJO (misma columna, una
@@ -354,7 +388,7 @@ def _formatear_celdas_segundo_titular_copropietario(wb_modelo):
         max_col = min(sheet.max_column, LIMITE_COLUMNAS_ESCANEO_CONYUGE)
         for fila in sheet.iter_rows(max_col=max_col):
             for celda in fila:
-                valor = celda.value
+                valor = _valor_mostrado_en_celda(wb_modelo, celda)
                 if isinstance(valor, str) and valor.strip() == TEXTO_SEGUNDO_TITULAR_COPROPIETARIO:
                     if celda.row > 1:
                         celda_arriba = _celda_ancla_por_posicion(sheet, celda.row - 1, celda.column)
