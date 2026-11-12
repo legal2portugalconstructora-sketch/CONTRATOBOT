@@ -1,0 +1,14 @@
+# Configuración del servidor de Streamlit -- hace que "py -m streamlit run
+# Inicio.py" (lo que ya hace Iniciar_CONTRATO.bat, sin pasar ninguna
+# bandera) escuche en todas las interfaces de red de esta PC, en el puerto
+# fijo 8501, en vez de solo en localhost. Así, cualquier PC de la misma
+# red puede entrar a http://<IP de esta PC>:8501 sin que haga falta lanzar
+# el servidor a mano con --server.address/--server.port (ver README.md).
+#
+# Esto NO abre la app a internet por sí solo -- sigue haciendo falta que
+# el Firewall de Windows de esta PC permita conexiones entrantes al puerto
+# 8501 (ver el paso opcional que ofrece Instalar_CONTRATOBOT.ps1).
+
+[server]
+address = "0.0.0.0"
+port = 8501

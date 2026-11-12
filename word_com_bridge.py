@@ -19,6 +19,19 @@ ejecutar una de las funciones que automatiza Excel/Word.
 
 import os
 import tempfile
+import threading
+
+# Serializa TODA la automatización COM de Excel/Word entre sesiones de
+# distintas personas usando la app al mismo tiempo (ver nota larga junto
+# a _cerrar_automatizaciones_huerfanas, más abajo: esa función mata
+# cualquier EXCEL.EXE/WINWORD.EXE "huérfano" que encuentre en la PC, y sin
+# este lock podía matar la sesión de OTRA persona que justo estaba
+# procesando su propio contrato). streamlit run corre un solo proceso con
+# un hilo por persona conectada, así que un threading.Lock() normal (no
+# hace falta un lock de archivo) alcanza para que, si dos personas abren
+# Excel/Word casi al mismo tiempo, la segunda espere a que la primera
+# termine y cierre su Excel/Word, en vez de arriesgarse a pisarla.
+_LOCK_COM = threading.Lock()
 
 RANGO_LISTAX_IMAGEN = "B2:I78"
 HOJA_LISTAX_IMAGEN = "List.Ax"
@@ -658,10 +671,14 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
     word = None
     wb = None
     doc = None
+    _LOCK_COM.acquire()
     try:
         # Ver la nota junto a _cerrar_automatizaciones_huerfanas: si queda
         # un Excel/Word huérfano trabado de un intento anterior, Dispatch
-        # se engancha a ESE MISMO proceso en vez de abrir uno nuevo.
+        # se engancha a ESE MISMO proceso en vez de abrir uno nuevo. El
+        # _LOCK_COM de arriba asegura que, mientras tanto, nadie más esté
+        # a mitad de su propia sesión de Excel/Word -- así este chequeo
+        # nunca puede matarle el proceso a otra persona (ver _LOCK_COM).
         _cerrar_automatizaciones_huerfanas()
 
         # Se usa Dispatch (enlace tardío) en vez de gencache.EnsureDispatch
@@ -755,6 +772,7 @@ def pegar_rangos_excel_como_imagen_en_word(ruta_excel, especificaciones, ruta_wo
         # sistema, no solo para este hilo.
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
         pythoncom.CoUninitialize()
+        _LOCK_COM.release()
 
 
 def pegar_rango_excel_como_imagen_en_word(ruta_excel, hoja_excel, rango, ruta_word, numero_pagina):
@@ -838,7 +856,10 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
 
     word = None
     doc = None
+    _LOCK_COM.acquire()
     try:
+        # Ver _LOCK_COM (arriba del archivo): evita que esta limpieza de
+        # huérfanos mate la sesión de Word de otra persona en curso.
         _cerrar_automatizaciones_huerfanas()
         word = win32.Dispatch("Word.Application")
         # Recién abierto, Word puede tardar un instante en aceptar llamadas
@@ -867,6 +888,7 @@ def recortar_contrato_a_maximo_paginas(docx_bytes, max_paginas=MAX_PAGINAS_CONTR
             os.remove(ruta_word)
         except OSError:
             pass
+        _LOCK_COM.release()
 
 
 def agregar_imagen_listax_a_contrato(excel_bytes, docx_bytes,
@@ -914,11 +936,14 @@ def recalcular_excel_con_com(excel_bytes):
     tmp_excel = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     excel = None
     wb = None
+    _LOCK_COM.acquire()
     try:
         tmp_excel.write(excel_bytes)
         tmp_excel.close()
         ruta_excel = os.path.abspath(tmp_excel.name)
 
+        # Ver _LOCK_COM (arriba del archivo): evita que esta limpieza de
+        # huérfanos mate la sesión de Excel de otra persona en curso.
         _cerrar_automatizaciones_huerfanas()
 
         # Sin Visible=True a propósito: a diferencia de pegar_rangos_excel_como_imagen_en_word,
@@ -963,6 +988,7 @@ def recalcular_excel_con_com(excel_bytes):
         if excel is not None:
             _cerrar_sin_fallar(lambda: excel.Quit())
         pythoncom.CoUninitialize()
+        _LOCK_COM.release()
         try:
             os.remove(tmp_excel.name)
         except OSError:
@@ -999,12 +1025,15 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
     tmp_pdf.close()
     word = None
     doc = None
+    _LOCK_COM.acquire()
     try:
         tmp_docx.write(docx_bytes)
         tmp_docx.close()
         ruta_docx = os.path.abspath(tmp_docx.name)
         ruta_pdf = os.path.abspath(tmp_pdf.name)
 
+        # Ver _LOCK_COM (arriba del archivo): evita que esta limpieza de
+        # huérfanos mate la sesión de Word de otra persona en curso.
         _cerrar_automatizaciones_huerfanas()
 
         # Sin Visible=True a propósito (igual que recalcular_excel_con_com):
@@ -1050,6 +1079,7 @@ def convertir_docx_a_pdf_con_com(docx_bytes):
         if word is not None:
             _cerrar_sin_fallar(lambda: word.Quit())
         pythoncom.CoUninitialize()
+        _LOCK_COM.release()
         for ruta in (tmp_docx.name, tmp_pdf.name):
             try:
                 os.remove(ruta)

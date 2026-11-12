@@ -9,12 +9,18 @@ promedio" y "errores"."""
 
 import json
 import os
+import threading
 from datetime import date, datetime
 
 RUTA_STATS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "contrato_stats.json")
 RUTA_MODO_PRUEBAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modo_pruebas.json")
 
 _MAX_EVENTOS_GUARDADOS = 500  # de sobra para "hoy"/promedio; evita que el .json crezca sin límite
+
+# Protege a contrato_stats.json/modo_pruebas.json de que dos personas
+# usando la app al mismo tiempo (un hilo por persona, mismo proceso de
+# streamlit run) pisen/pierdan la escritura de la otra.
+_LOCK_STATS = threading.Lock()
 
 
 def modo_pruebas_activo() -> bool:
@@ -32,8 +38,9 @@ def modo_pruebas_activo() -> bool:
 
 
 def establecer_modo_pruebas(activo: bool):
-    with open(RUTA_MODO_PRUEBAS, "w", encoding="utf-8") as f:
-        json.dump({"activo": bool(activo)}, f)
+    with _LOCK_STATS:
+        with open(RUTA_MODO_PRUEBAS, "w", encoding="utf-8") as f:
+            json.dump({"activo": bool(activo)}, f)
 
 
 def _cargar():
@@ -68,15 +75,16 @@ def registrar_generacion(exito: bool, segundos: float, categoria: str = "word"):
     if modo_pruebas_activo():
         return
     try:
-        datos = _cargar()
-        datos["eventos"].append({
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "categoria": categoria,
-            "exito": bool(exito),
-            "segundos": round(float(segundos), 2),
-        })
-        datos["eventos"] = datos["eventos"][-_MAX_EVENTOS_GUARDADOS:]
-        _guardar(datos)
+        with _LOCK_STATS:
+            datos = _cargar()
+            datos["eventos"].append({
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "categoria": categoria,
+                "exito": bool(exito),
+                "segundos": round(float(segundos), 2),
+            })
+            datos["eventos"] = datos["eventos"][-_MAX_EVENTOS_GUARDADOS:]
+            _guardar(datos)
     except Exception:
         pass
 

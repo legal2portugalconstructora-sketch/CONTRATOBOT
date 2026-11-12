@@ -11,6 +11,7 @@ contrato, o al abrir la app)."""
 import io
 import json
 import os
+import threading
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,17 @@ from stats_tracker import modo_pruebas_activo
 RUTA_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
 RUTA_PENDIENTES_N8N = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pendientes_n8n.json")
 RUTA_CORRELATIVOS_CONTRATO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "correlativos_contrato.json")
+
+# Protegen a pendientes_n8n.json y correlativos_contrato.json de que dos
+# personas usando la app al mismo tiempo (streamlit run corre un solo
+# proceso, con un hilo por persona conectada) pisen/pierdan la escritura
+# de la otra en el patrón "cargar -> modificar -> guardar". _LOCK_CORRELATIVOS
+# es RLock (no Lock normal) a propósito: _obtener_o_asignar_id_contrato
+# necesita tomarlo para TODA la asignación (incluyendo leer/escribir
+# ID_CONTRATO.txt) y, dentro de eso, llama a _siguiente_correlativo, que
+# también lo toma -- con un Lock normal, el mismo hilo se trabaría solo.
+_LOCK_PENDIENTES = threading.Lock()
+_LOCK_CORRELATIVOS = threading.RLock()
 
 _MAX_PENDIENTES_GUARDADOS = 200
 _TIMEOUT_SEGUNDOS = 15
@@ -260,15 +272,16 @@ def reintentar_pendientes_n8n():
     url = _leer_url_webhook()
     if not url:
         return
-    pendientes = _cargar_pendientes()
-    if not pendientes:
-        return
-    quedan = []
-    for item in pendientes:
-        exito, _ = _enviar(url, item)
-        if not exito:
-            quedan.append(item)
-    _guardar_pendientes(quedan)
+    with _LOCK_PENDIENTES:
+        pendientes = _cargar_pendientes()
+        if not pendientes:
+            return
+        quedan = []
+        for item in pendientes:
+            exito, _ = _enviar(url, item)
+            if not exito:
+                quedan.append(item)
+        _guardar_pendientes(quedan)
 
 
 # =========================================================================
@@ -299,13 +312,14 @@ def _guardar_correlativos(datos):
 def _siguiente_correlativo(codigo, anio, pruebas):
     """Incrementa en 1 el correlativo de 'codigo-anio' (grupo 'pruebas' o
     'reales' según corresponda), lo guarda, y devuelve el nuevo número."""
-    datos = _cargar_correlativos()
-    grupo = "pruebas" if pruebas else "reales"
-    clave = f"{codigo}-{anio}"
-    siguiente = datos[grupo].get(clave, 0) + 1
-    datos[grupo][clave] = siguiente
-    _guardar_correlativos(datos)
-    return siguiente
+    with _LOCK_CORRELATIVOS:
+        datos = _cargar_correlativos()
+        grupo = "pruebas" if pruebas else "reales"
+        clave = f"{codigo}-{anio}"
+        siguiente = datos[grupo].get(clave, 0) + 1
+        datos[grupo][clave] = siguiente
+        _guardar_correlativos(datos)
+        return siguiente
 
 
 def obtener_correlativo_actual(codigo, anio):
@@ -313,7 +327,8 @@ def obtener_correlativo_actual(codigo, anio):
     todavía no se asignó ninguno) -- el próximo ID automático sería este
     número + 1. Pública: la usa la pantalla de Configuración (ver
     Inicio.py) para mostrar el valor actual antes de ajustarlo a mano."""
-    return _cargar_correlativos()["reales"].get(f"{codigo}-{anio}", 0)
+    with _LOCK_CORRELATIVOS:
+        return _cargar_correlativos()["reales"].get(f"{codigo}-{anio}", 0)
 
 
 def fijar_correlativo_real(codigo, anio, valor):
@@ -322,9 +337,10 @@ def fijar_correlativo_real(codigo, anio, valor):
     app (ej. en la matriz de contratos), para que el siguiente ID
     automático de ese proyecto+año no repita un número ya usado. Nunca
     toca el contador de 'pruebas'."""
-    datos = _cargar_correlativos()
-    datos["reales"][f"{codigo}-{anio}"] = int(valor)
-    _guardar_correlativos(datos)
+    with _LOCK_CORRELATIVOS:
+        datos = _cargar_correlativos()
+        datos["reales"][f"{codigo}-{anio}"] = int(valor)
+        _guardar_correlativos(datos)
 
 
 def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
@@ -356,32 +372,38 @@ def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
         return None, f"Falta el código del proyecto {_texto(proyecto)} en config.yaml"
 
     anio = datetime.now(_ZONA_LIMA).year
-    ruta_id = None
 
-    if not pruebas:
-        try:
-            carpeta, _ = carpeta_cliente(proyecto, lote, nombre_cliente, crear=True)
-            ruta_id = os.path.join(carpeta, "ID_CONTRATO.txt")
-            if os.path.isfile(ruta_id):
-                with open(ruta_id, "r", encoding="utf-8") as f:
-                    existente = f.read().strip()
-                if existente:
-                    return existente, None
-        except OSError:
-            pass
+    # Todo lo de acá abajo (leer/escribir ID_CONTRATO.txt Y el correlativo)
+    # va dentro del MISMO lock, para que dos personas pidiendo el ID del
+    # MISMO cliente casi al mismo tiempo no terminen asignándole dos
+    # números distintos (uno de los cuales se perdería/desperdiciaría).
+    with _LOCK_CORRELATIVOS:
+        ruta_id = None
 
-    correlativo = _siguiente_correlativo(codigo, anio, pruebas)
-    id_contrato = f"{codigo}-{anio}-{correlativo:04d}"
-    if pruebas:
-        return f"PRUEBA-{id_contrato}", None
+        if not pruebas:
+            try:
+                carpeta, _ = carpeta_cliente(proyecto, lote, nombre_cliente, crear=True)
+                ruta_id = os.path.join(carpeta, "ID_CONTRATO.txt")
+                if os.path.isfile(ruta_id):
+                    with open(ruta_id, "r", encoding="utf-8") as f:
+                        existente = f.read().strip()
+                    if existente:
+                        return existente, None
+            except OSError:
+                pass
 
-    if ruta_id:
-        try:
-            with open(ruta_id, "w", encoding="utf-8") as f:
-                f.write(id_contrato)
-        except OSError:
-            pass
-    return id_contrato, None
+        correlativo = _siguiente_correlativo(codigo, anio, pruebas)
+        id_contrato = f"{codigo}-{anio}-{correlativo:04d}"
+        if pruebas:
+            return f"PRUEBA-{id_contrato}", None
+
+        if ruta_id:
+            try:
+                with open(ruta_id, "w", encoding="utf-8") as f:
+                    f.write(id_contrato)
+            except OSError:
+                pass
+        return id_contrato, None
 
 
 def registrar_contrato_en_n8n(excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad):
@@ -408,9 +430,10 @@ def registrar_contrato_en_n8n(excel_bytes, proyecto, lote, nombre_cliente, numer
         if exito:
             return "Registrado en el registro maestro", advertencias, id_contrato
 
-        pendientes = _cargar_pendientes()
-        pendientes.append(payload)
-        _guardar_pendientes(pendientes)
+        with _LOCK_PENDIENTES:
+            pendientes = _cargar_pendientes()
+            pendientes.append(payload)
+            _guardar_pendientes(pendientes)
         return "Pendiente de registrar (n8n apagado)", advertencias, id_contrato
     except Exception as exc:
         return f"No se pudo registrar en n8n: {exc}", [], None

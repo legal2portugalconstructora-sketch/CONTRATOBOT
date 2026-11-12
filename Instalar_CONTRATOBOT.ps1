@@ -143,6 +143,31 @@ if ($esRepoGit) {
     git config core.hooksPath .githooks
 }
 
+# --- 6.5) Opcional: abrir el puerto 8501 en el Firewall de Windows, para
+#          que otras PCs de la misma red puedan conectarse a esta app
+#          (ver .streamlit/config.toml, que ya deja el servidor
+#          escuchando en todas las interfaces de red). Sin esta regla, el
+#          Firewall sigue bloqueando las conexiones entrantes aunque el
+#          servidor ya este escuchando bien. Requiere correr este
+#          instalador como Administrador -- si no, avisa en vez de fallar
+#          con un error confuso. ---
+Escribir-Titulo "Acceso desde otras PCs de la red (Firewall de Windows)"
+if (Preguntar-SiNo "Permitir que otras PCs de esta red se conecten a ContratoBot (abrir el puerto 8501 en el Firewall)?") {
+    $esAdmin = ([Security.Principal.WindowsIdentity]::GetCurrent().Groups -contains "S-1-5-32-544")
+    if (-not $esAdmin) {
+        Write-Host "No se pudo: hace falta correr este instalador como Administrador para" -ForegroundColor Yellow
+        Write-Host "poder crear la regla del Firewall. Volve a correrlo con 'Ejecutar como" -ForegroundColor Yellow
+        Write-Host "administrador' si queres habilitar esto." -ForegroundColor Yellow
+    } else {
+        try {
+            New-NetFirewallRule -DisplayName "ContratoBot (Streamlit)" -Direction Inbound -Protocol TCP -LocalPort 8501 -Action Allow -ErrorAction Stop | Out-Null
+            Write-Host "Listo -- el puerto 8501 ya esta permitido en el Firewall de Windows." -ForegroundColor Green
+        } catch {
+            Write-Host "No se pudo crear la regla del Firewall: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
 # --- 7) Todo listo -- PLANTILLAS/ ya vino con el git clone/pull (dejo de
 #         ser manual desde que se subio al repositorio), y config.yaml ya
 #         no hace falta (no hay login en la app). ---

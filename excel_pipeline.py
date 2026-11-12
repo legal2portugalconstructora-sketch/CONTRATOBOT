@@ -11,6 +11,7 @@ import os
 import io
 import json
 import re
+import threading
 import zipfile
 from datetime import datetime, date
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
@@ -26,6 +27,11 @@ from templates_manager import CELDAS_AXA_POR_DEFECTO
 # =========================================================================
 ruta_actual = os.path.dirname(os.path.abspath(__file__))
 ARCHIVO_MEMORIA = os.path.join(ruta_actual, "memoria_aprendizaje.json")
+
+# Protege a memoria_aprendizaje.json de que dos personas usando la app al
+# mismo tiempo (un hilo por persona, mismo proceso de streamlit run)
+# pisen/pierdan la escritura de la otra.
+_LOCK_MEMORIA = threading.Lock()
 
 # Si en tu caso SÍ quieres que la columna C (etiquetas) de "DATOS" se
 # copie también del origen al modelo, pon esto en True. Por defecto en
@@ -77,16 +83,18 @@ def cargar_memoria():
 
 
 def guardar_en_memoria(nueva_regla):
-    memoria = cargar_memoria()
-    if nueva_regla not in memoria["reglas_adicionales"]:
-        memoria["reglas_adicionales"].append(nueva_regla)
-        with open(ARCHIVO_MEMORIA, "w", encoding="utf-8") as f:
-            json.dump(memoria, f, indent=4, ensure_ascii=False)
+    with _LOCK_MEMORIA:
+        memoria = cargar_memoria()
+        if nueva_regla not in memoria["reglas_adicionales"]:
+            memoria["reglas_adicionales"].append(nueva_regla)
+            with open(ARCHIVO_MEMORIA, "w", encoding="utf-8") as f:
+                json.dump(memoria, f, indent=4, ensure_ascii=False)
 
 
 def borrar_memoria():
-    with open(ARCHIVO_MEMORIA, "w", encoding="utf-8") as f:
-        json.dump({"reglas_adicionales": []}, f, indent=4, ensure_ascii=False)
+    with _LOCK_MEMORIA:
+        with open(ARCHIVO_MEMORIA, "w", encoding="utf-8") as f:
+            json.dump({"reglas_adicionales": []}, f, indent=4, ensure_ascii=False)
 
 
 # =========================================================================

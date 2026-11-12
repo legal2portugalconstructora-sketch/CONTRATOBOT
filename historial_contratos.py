@@ -16,9 +16,15 @@ para no ensuciar el historial real con pruebas."""
 import io
 import json
 import os
+import threading
 from datetime import datetime
 
 from stats_tracker import modo_pruebas_activo
+
+# Protege a historial_membresias.json de que dos personas usando la app
+# al mismo tiempo (un hilo por persona, mismo proceso de streamlit run)
+# pisen/pierdan la escritura de la otra.
+_LOCK_MEMBRESIAS = threading.Lock()
 
 RAIZ_HISTORIAL = r"C:\JESUS LEGAL\CONTRATOS"
 
@@ -179,15 +185,16 @@ def registrar_numero_membresia(proyecto, nombre_cliente, numero_membresia):
     if not numero_membresia or not str(numero_membresia).strip():
         return
     try:
-        datos = _cargar_membresias()
-        datos["eventos"].append({
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "proyecto": proyecto,
-            "nombre_cliente": nombre_cliente,
-            "numero_membresia": str(numero_membresia).strip(),
-        })
-        datos["eventos"] = datos["eventos"][-_MAX_MEMBRESIAS_GUARDADAS:]
-        _guardar_membresias(datos)
+        with _LOCK_MEMBRESIAS:
+            datos = _cargar_membresias()
+            datos["eventos"].append({
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "proyecto": proyecto,
+                "nombre_cliente": nombre_cliente,
+                "numero_membresia": str(numero_membresia).strip(),
+            })
+            datos["eventos"] = datos["eventos"][-_MAX_MEMBRESIAS_GUARDADAS:]
+            _guardar_membresias(datos)
     except Exception:
         pass
 
