@@ -10,7 +10,7 @@ rem se baja suelto (ej. desde la pagina de Releases de GitHub) y se corre
 rem desde donde sea (Descargas, Escritorio, etc.).
 
 setlocal
-set "REPO_URL=https://github.com/jediri2010-web/CONTRATOBOT.git"
+set "REPO_URL=https://github.com/legal2portugalconstructora-sketch/CONTRATOBOT.git"
 set "DESTINO=%USERPROFILE%\Desktop\CONTRATOBOT"
 
 echo ===============================================
