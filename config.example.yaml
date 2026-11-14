@@ -30,6 +30,13 @@ cookie:
 # falta tenerla configurada para que el resto de la app funcione.
 n8n_webhook_url: http://localhost:5678/webhook/registrar-contrato
 
+# Clave opcional que se manda en el header "X-Api-Key" de cada POST a
+# n8n_webhook_url, para que n8n solo acepte avisos de las PCs que la
+# conocen (útil cuando varias PCs le escriben al mismo n8n en la nube).
+# Si esta clave no existe o está vacía, no se manda ningún header
+# X-Api-Key -- igual que hoy.
+n8n_webhook_api_key: REEMPLAZAR_CON_LA_CLAVE_REAL
+
 # Código corto de cada proyecto, usado para armar el ID_CONTRATO
 # (CODIGO-AAAA-NNNN, ej. "CDV-2026-0001") que se le asigna a cada
 # CONTRATO la primera vez que se genera (ver n8n_integracion.py,
@@ -44,3 +51,17 @@ codigos_proyecto:
   FINCA DEL VALLE: FDV
   HACIENDA CHIRIBAYA: HCH
   RIVIERA COAST: RVC
+
+# Rango opcional de números para el NNNN de ID_CONTRATO en ESTA PC.
+# Sirve para que dos PCs que le escriben al mismo n8n en la nube nunca
+# puedan asignar el mismo ID_CONTRATO, aunque sea para el mismo
+# proyecto y año: a cada PC se le da un rango distinto (ej. PC1
+# 1-4999, PC2 5000-9999). Si no se configuran, el rango es 1-9999 (sin
+# dividir entre PCs, igual que hoy). Si se llega al máximo del rango,
+# la app avisa con un error claro en vez de asignar un número repetido.
+# Ambos valores deben ser números enteros entre 1 y 9999, con inicio
+# menor o igual a fin -- si están pero no cumplen esto, la app NO
+# asigna ningún ID_CONTRATO hasta que se corrija (no usa un valor por
+# defecto en ese caso, para evitar un rango equivocado sin darse cuenta).
+id_contrato_rango_inicio: 1
+id_contrato_rango_fin: 9999

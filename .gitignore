@@ -1,5 +1,7 @@
 # Credenciales y secretos — nunca deben subirse al repositorio.
 config.yaml
+config*.bak.yaml
+config.local*.yaml
 .env
 
 # Python

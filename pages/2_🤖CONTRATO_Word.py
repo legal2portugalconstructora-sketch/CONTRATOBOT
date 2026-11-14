@@ -802,6 +802,8 @@ elif paso_actual == 4:
         st.caption(f'📡 {_n8n_estado}{_n8n_sufijo_id}')
     elif _n8n_estado and _n8n_estado.startswith("Falta el código del proyecto"):
         st.error(f'❌ {_n8n_estado}')
+    elif _n8n_estado and _n8n_estado.startswith("No se puede asignar ID_CONTRATO"):
+        st.error(f'❌ {_n8n_estado}')
     elif _n8n_estado:
         st.caption(f'⏳ {_n8n_estado}{_n8n_sufijo_id}')
     for _advertencia_n8n in st.session_state.get("n8n_advertencias") or []:

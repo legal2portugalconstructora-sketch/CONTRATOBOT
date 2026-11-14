@@ -57,6 +57,78 @@ def _leer_url_webhook():
     return None
 
 
+def _leer_api_key_webhook():
+    """Lee 'n8n_webhook_api_key' de config.yaml. Devuelve None (no rompe
+    nada) si el archivo no existe, no es YAML válido, o la clave no
+    está/está vacía -- en ese caso _enviar() simplemente no manda el
+    header X-Api-Key, igual que si esta clave no existiera. Nunca se
+    imprime ni se incluye en ningún mensaje de error."""
+    try:
+        with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
+            datos = yaml.safe_load(f)
+        if isinstance(datos, dict):
+            clave = datos.get("n8n_webhook_api_key")
+            if clave and str(clave).strip():
+                return str(clave).strip()
+    except (OSError, yaml.YAMLError):
+        pass
+    return None
+
+
+def _valor_rango_o_error(datos, clave, default):
+    """Devuelve (valor, error_o_None) para UNA clave del rango de
+    ID_CONTRATO. Si 'clave' no está en 'datos' (o está vacía), usa
+    'default' sin error -- mismo criterio que el resto de este archivo
+    para claves opcionales. Si SÍ está pero no es un entero entre 1 y
+    9999, devuelve (None, mensaje_error): a propósito NO cae al default
+    en ese caso, para no asignar silenciosamente un rango distinto al
+    que la persona escribió a propósito en config.yaml."""
+    crudo = datos.get(clave)
+    if crudo is None or (isinstance(crudo, str) and not crudo.strip()):
+        return default, None
+    if isinstance(crudo, bool) or not isinstance(crudo, int):
+        return None, (
+            f"No se puede asignar ID_CONTRATO: '{clave}' en config.yaml debe ser "
+            f"un número entero entre 1 y 9999 (valor actual: {crudo!r})."
+        )
+    if not (1 <= crudo <= 9999):
+        return None, (
+            f"No se puede asignar ID_CONTRATO: '{clave}' en config.yaml debe estar "
+            f"entre 1 y 9999 (valor actual: {crudo})."
+        )
+    return crudo, None
+
+
+def _leer_rango_id_contrato():
+    """Lee 'id_contrato_rango_inicio' (default 1) e
+    'id_contrato_rango_fin' (default 9999) de config.yaml. Devuelve
+    (inicio, fin, None) si todo es válido (o las claves no estaban), o
+    (None, None, mensaje_error) si alguna de las dos claves está
+    presente pero es inválida, o si el resultado final tiene
+    inicio > fin -- en cualquiera de esos casos NO se cae a los
+    defaults, se frena con un error claro (ver _valor_rango_o_error)."""
+    try:
+        with open(RUTA_CONFIG, "r", encoding="utf-8") as f:
+            datos = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        datos = None
+    if not isinstance(datos, dict):
+        datos = {}
+
+    inicio, error_inicio = _valor_rango_o_error(datos, "id_contrato_rango_inicio", 1)
+    if error_inicio:
+        return None, None, error_inicio
+    fin, error_fin = _valor_rango_o_error(datos, "id_contrato_rango_fin", 9999)
+    if error_fin:
+        return None, None, error_fin
+    if inicio > fin:
+        return None, None, (
+            "No se puede asignar ID_CONTRATO: el rango en config.yaml no es válido "
+            f"(id_contrato_rango_inicio={inicio} es mayor que id_contrato_rango_fin={fin})."
+        )
+    return inicio, fin, None
+
+
 def obtener_codigos_proyecto():
     """Lee 'codigos_proyecto' de config.yaml (ej. {'COSTA DEL VALLE':
     'CDV'}) -> {PROYECTO EN MAYÚSCULAS: CODIGO}. Devuelve {} (no rompe
@@ -248,20 +320,32 @@ def _guardar_pendientes(pendientes):
         json.dump(pendientes[-_MAX_PENDIENTES_GUARDADOS:], f, ensure_ascii=False, indent=2)
 
 
-def _enviar(url, payload):
+def _enviar(url, payload, api_key=None):
     """POST a 'url' con 'payload' como JSON. Éxito SOLO si responde
     exactamente 200 (cualquier otro código -- 4xx, 5xx, incluso otro
-    2xx -- cuenta como fallo). Nunca lanza excepción: timeouts, el host
-    caído, DNS roto, etc. se devuelven como (False, motivo)."""
+    2xx -- cuenta como fallo). Si 'api_key' tiene valor, se manda como
+    header X-Api-Key (nunca se imprime ni se incluye en 'motivo').
+    Nunca lanza excepción: timeouts, el host caído, DNS roto, etc. se
+    devuelven como (False, motivo, None, "").
+
+    Devuelve (exito, motivo, status_code, cuerpo_texto) -- 'status_code'
+    y 'cuerpo_texto' los usa el llamador para distinguir una clave
+    incorrecta (403) o un ID_CONTRATO duplicado (texto de la respuesta)
+    de cualquier otro tipo de fallo."""
     import requests
 
+    headers = {"X-Api-Key": api_key} if api_key else None
     try:
-        respuesta = requests.post(url, json=payload, timeout=_TIMEOUT_SEGUNDOS)
+        respuesta = requests.post(url, json=payload, timeout=_TIMEOUT_SEGUNDOS, headers=headers)
     except requests.RequestException as exc:
-        return False, str(exc)
+        return False, str(exc), None, ""
+    try:
+        cuerpo_texto = respuesta.text
+    except Exception:
+        cuerpo_texto = ""
     if respuesta.status_code == 200:
-        return True, None
-    return False, f"n8n respondió con código {respuesta.status_code}"
+        return True, None, respuesta.status_code, cuerpo_texto
+    return False, f"n8n respondió con código {respuesta.status_code}", respuesta.status_code, cuerpo_texto
 
 
 def reintentar_pendientes_n8n():
@@ -272,13 +356,14 @@ def reintentar_pendientes_n8n():
     url = _leer_url_webhook()
     if not url:
         return
+    api_key = _leer_api_key_webhook()
     with _LOCK_PENDIENTES:
         pendientes = _cargar_pendientes()
         if not pendientes:
             return
         quedan = []
         for item in pendientes:
-            exito, _ = _enviar(url, item)
+            exito, _motivo, _status, _cuerpo = _enviar(url, item, api_key)
             if not exito:
                 quedan.append(item)
         _guardar_pendientes(quedan)
@@ -309,17 +394,27 @@ def _guardar_correlativos(datos):
         json.dump(datos, f, ensure_ascii=False, indent=2)
 
 
-def _siguiente_correlativo(codigo, anio, pruebas):
-    """Incrementa en 1 el correlativo de 'codigo-anio' (grupo 'pruebas' o
-    'reales' según corresponda), lo guarda, y devuelve el nuevo número."""
+def _siguiente_correlativo(codigo, anio, pruebas, rango_inicio=1, rango_fin=9999):
+    """Calcula el siguiente correlativo de 'codigo-anio' (grupo 'pruebas'
+    o 'reales' según corresponda) como el mayor entre (último + 1) y
+    'rango_inicio'. Si ese número se pasa de 'rango_fin', NO guarda nada
+    y devuelve (None, mensaje_error) -- no se asigna ningún ID fuera del
+    rango configurado. Si entra en rango, lo guarda y devuelve
+    (numero, None). Todo dentro del mismo lock, para que dos personas
+    pidiendo el siguiente número al mismo tiempo no se pisen."""
     with _LOCK_CORRELATIVOS:
         datos = _cargar_correlativos()
         grupo = "pruebas" if pruebas else "reales"
         clave = f"{codigo}-{anio}"
-        siguiente = datos[grupo].get(clave, 0) + 1
+        siguiente = max(datos[grupo].get(clave, 0) + 1, rango_inicio)
+        if siguiente > rango_fin:
+            return None, (
+                f"No se puede asignar ID_CONTRATO nuevo para {codigo}-{anio}: "
+                f"se alcanzó el máximo del rango configurado ({rango_inicio}-{rango_fin})."
+            )
         datos[grupo][clave] = siguiente
         _guardar_correlativos(datos)
-        return siguiente
+        return siguiente, None
 
 
 def obtener_correlativo_actual(codigo, anio):
@@ -371,6 +466,10 @@ def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
     if not codigo:
         return None, f"Falta el código del proyecto {_texto(proyecto)} en config.yaml"
 
+    rango_inicio, rango_fin, error_rango = _leer_rango_id_contrato()
+    if error_rango:
+        return None, error_rango
+
     anio = datetime.now(_ZONA_LIMA).year
 
     # Todo lo de acá abajo (leer/escribir ID_CONTRATO.txt Y el correlativo)
@@ -392,7 +491,9 @@ def _obtener_o_asignar_id_contrato(proyecto, lote, nombre_cliente):
             except OSError:
                 pass
 
-        correlativo = _siguiente_correlativo(codigo, anio, pruebas)
+        correlativo, error_correlativo = _siguiente_correlativo(codigo, anio, pruebas, rango_inicio, rango_fin)
+        if error_correlativo:
+            return None, error_correlativo
         id_contrato = f"{codigo}-{anio}-{correlativo:04d}"
         if pruebas:
             return f"PRUEBA-{id_contrato}", None
@@ -421,14 +522,25 @@ def registrar_contrato_en_n8n(excel_bytes, proyecto, lote, nombre_cliente, numer
         if not url:
             return "n8n no está configurado (falta 'n8n_webhook_url' en config.yaml)", [], id_contrato
 
+        api_key = _leer_api_key_webhook()
         reintentar_pendientes_n8n()
 
         payload, advertencias = armar_payload(
             excel_bytes, proyecto, lote, nombre_cliente, numero_membresia, opcion_propiedad, id_contrato
         )
-        exito, _motivo = _enviar(url, payload)
+        exito, _motivo, status, cuerpo = _enviar(url, payload, api_key)
         if exito:
             return "Registrado en el registro maestro", advertencias, id_contrato
+
+        if status == 403:
+            advertencias = advertencias + [
+                "La clave del webhook de n8n (n8n_webhook_api_key) es incorrecta o falta"
+            ]
+        elif cuerpo and "ID duplicado" in cuerpo:
+            advertencias = advertencias + [
+                "n8n detectó un ID_CONTRATO duplicado. El contrato no se registró: "
+                "revisar la pestaña CONFLICTOS del registro maestro."
+            ]
 
         with _LOCK_PENDIENTES:
             pendientes = _cargar_pendientes()
